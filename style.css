@@ -150,7 +150,9 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:0;background:none
 .choices{flex:1;display:flex;flex-direction:column;gap:.55rem;justify-content:center;
          max-width:52rem;margin:0 auto;width:100%}
 .choice{background:var(--panel);border:1px solid var(--line);border-radius:.7rem;
-        padding:1rem 1.2rem;font-size:1.25rem;text-align:center;letter-spacing:.1em}
+        padding:.8rem 1.2rem;text-align:center}
+.choice .cmain{font-size:1.25rem;letter-spacing:.1em}
+.choice .ckana{font-size:.85rem;color:var(--sub);letter-spacing:.14em;margin-top:.2rem}
 .choice.correct{background:color-mix(in srgb,var(--ok) 22%,var(--panel));border-color:var(--ok)}
 .choice.wrong{background:color-mix(in srgb,var(--ng) 18%,var(--panel));border-color:var(--ng)}
 .selfrow{display:flex;gap:1rem;justify-content:center}

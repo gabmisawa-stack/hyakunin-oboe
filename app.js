@@ -3,7 +3,7 @@
 
 import { emptyRecord, gradeRecord, orderPool, isWeak, pickDistractors } from './srs.js';
 
-const BUILD = '1.1.2 / 2026-08-31';   // 設定画面に出す。iPadが古い版を掴んでいないかの確認用
+const BUILD = '1.2.0 / 2026-09-01';   // 設定画面に出す。iPadが古い版を掴んでいないかの確認用
 
 const $ = s => document.querySelector(s);
 const el = (t, c, x) => { const n = document.createElement(t); if (c) n.className = c;
@@ -15,6 +15,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 /* ==================== データ ==================== */
 let POEMS = [], GOSHOKU = null, BY_ID = {};
 const MODES = [
+  { id:'oboe',  nm:'はじめて おぼえる',
+    ds:'まだ知らない5首を、上の句と下の句をならべて見せてから、その5首だけで試す。最初はここから' },
   { id:'tori',  nm:'札取り',        ds:'読み上げを聞いて、取り札をタップ。競技かるた本番に一番近い形' },
   { id:'kimari',nm:'決まり字クイズ',ds:'一文字ずつ出てくる。何文字目で分かるかを記録する' },
   { id:'match', nm:'上の句→下の句', ds:'上の句を見て下の句を選ぶ。音を出さずにできる' },
@@ -220,11 +222,24 @@ $('#startBtn').onclick = () => startSession();
 $('#againBtn').onclick = () => startSession();
 
 /* ==================== セッション ==================== */
-let Q = [], qi = 0, log = [];
+let Q = [], qi = 0, log = [], batch = [];
+
+const OBOE_BATCH = 5;   // 一度に紹介する首数。多いと覚える前に忘れる
 
 function startSession() {
   const pool = poolFor(pickColor);
-  Q = selectPoems(pool, Math.min(S.sessionLen, pool.length));
+  if (pickMode === 'oboe') {
+    // まだ身についていないものから5首。「見せる→2択→4択」の順に並べる
+    batch = selectPoems(pool, Math.min(OBOE_BATCH, pool.length));
+    Q = [
+      ...batch.map(p => ({ poem: p, kind: 'show' })),
+      ...shuffle(batch.map(p => ({ poem: p, kind: 'test2' }))),
+      ...shuffle(batch.map(p => ({ poem: p, kind: 'test4' }))),
+    ];
+  } else {
+    batch = [];
+    Q = selectPoems(pool, Math.min(S.sessionLen, pool.length)).map(p => ({ poem: p, kind: null }));
+  }
   qi = 0; log = [];
   go('session'); nextQuestion();
 }
@@ -236,7 +251,8 @@ function nextQuestion() {
   $('#progFill').style.width = (qi / Q.length * 100) + '%';
   $('#counter').textContent = `${qi + 1} / ${Q.length}`;
   $('#feedback').className = 'feedback'; $('#feedback').textContent = '';
-  const poem = Q[qi], pool = poolFor(pickColor);
+  const { poem, kind } = Q[qi], pool = poolFor(pickColor);
+  if (pickMode === 'oboe') return (kind === 'show' ? qShow : qOboeTest)(poem, kind);
   ({ tori: qTori, kimari: qKimari, match: qMatch, ansho: qAnsho })[pickMode](poem, pool);
 }
 
@@ -246,6 +262,7 @@ const tapOnce = () => new Promise(res =>
   addEventListener('pointerdown', res, { once: true }));
 
 async function advance(poem, ok, ms, kind) {
+  if (kind === 'show') { qi++; return nextQuestion(); }   // 見せただけ。記録しない
   const g = grade(poem.id, ok, ms);
   log.push({ id: poem.id, ok, ms });
   const msg = ok ? (g === 'slow' ? `おしい！ ${(ms/1000).toFixed(1)}秒。もうすこし はやく`
@@ -356,6 +373,67 @@ const markAnswer = (nodes, poem, picked) => {
   if (picked && picked !== poem.id) nodes.get(picked)?.classList.add('wrong');
 };
 
+/* ---- はじめて おぼえる：① 見せる ---- */
+// 何も知らない状態で当てさせても、当てずっぽうにしかならない。まず全部見せる。
+function qShow(poem) {
+  const st = $('#stage'); st.innerHTML = '';
+  st.append(el('div', 'hint', `おぼえよう　（${qi + 1} / ${OBOE_BATCH}）`));
+
+  const kami = el('div', 'kanji');
+  kami.append(el('span', 'reveal', poem.kaminoku_kana.slice(0, poem.kimariji_len)),
+              el('span', '', poem.kaminoku_kana.slice(poem.kimariji_len)));
+  const kamiK = el('div', 'kana', poem.kaminoku);
+  const arrow = el('div', 'hint', '↓');
+  const shimo = el('div', 'kanji', poem.shimonoku_kana);
+  const shimoK = el('div', 'kana', `${poem.shimonoku}　　${poem.author}`);
+  st.append(kami, kamiK, arrow, shimo, shimoK);
+  st.append(el('div', 'hint',
+    `「${poem.kimariji}」まで きこえたら、この ふだ（${poem.kimariji_len}もじ決まり）`));
+
+  const board = $('#board'); board.className = 'selfrow'; board.innerHTML = '';
+  board.style.gridTemplateColumns = '';
+  const again = el('button', 'ghost big', '♪ もういちど きく');
+  again.onclick = () => Audio_.play(poem);
+  const next = el('button', 'yes', 'つぎへ');
+  next.onclick = () => advance(poem, true, null, 'show');
+  board.append(again, next);
+  Audio_.play(poem);
+}
+
+/* ---- はじめて おぼえる：② その5首だけで試す ---- */
+function qOboeTest(poem, kind) {
+  const n = kind === 'test2' ? 2 : 4;
+  const st = $('#stage'); st.innerHTML = '';
+  st.append(el('div', 'hint', n === 2 ? 'どっちかな？' : 'どれかな？'));
+  const line = el('div', 'kanji');
+  line.append(el('span', 'reveal', poem.kaminoku_kana.slice(0, poem.kimariji_len)),
+              el('span', '', poem.kaminoku_kana.slice(poem.kimariji_len)));
+  st.append(line, el('div', 'kana', poem.kaminoku));
+
+  // 選択肢は、いま覚えている5首のなかから出す
+  const others = shuffle(batch.filter(p => p.id !== poem.id)).slice(0, n - 1);
+  const cards = shuffle([poem, ...others]);
+  const board = $('#board'); board.className = 'choices'; board.innerHTML = '';
+  board.style.gridTemplateColumns = '';
+  let done = false; const t0 = performance.now(); const nodes = new Map();
+  for (const c of cards) {
+    const b = el('button', 'choice');
+    b.append(el('div', 'cmain', c.shimonoku_kana));
+    if (S.showKana) b.append(el('div', 'ckana', c.shimonoku));
+    b.onclick = () => {
+      if (done) return; done = true;
+      nodes.forEach((x, id) => { x.onclick = null; if (id === poem.id) x.classList.add('correct'); });
+      if (c.id !== poem.id) {
+        b.classList.add('wrong');
+        // まちがえたら、その場でもう一度うしろに回す
+        Q.splice(qi + 1, 0, { poem, kind });
+      }
+      advance(poem, c.id === poem.id, performance.now() - t0);
+    };
+    nodes.set(c.id, b); board.append(b);
+  }
+}
+
 /* ---- モード① 札取り ---- */
 function qTori(poem, pool) {
   const st = $('#stage'); st.innerHTML = '';
@@ -414,7 +492,9 @@ function qMatch(poem, pool) {
   const cards = shuffle([poem, ...distractors(poem, pool, 3)]);
   let done = false; const t0 = performance.now(); const nodes = new Map();
   for (const c of cards) {
-    const b = el('button', 'choice', c.shimonoku);
+    const b = el('button', 'choice');
+    b.append(el('div', 'cmain', c.shimonoku));
+    if (S.showKana) b.append(el('div', 'ckana', c.shimonoku_kana));
     b.onclick = () => { if (done) return; done = true;
       nodes.forEach((n, id) => { n.onclick = null; if (id === poem.id) n.classList.add('correct'); });
       if (c.id !== poem.id) b.classList.add('wrong');
@@ -428,11 +508,13 @@ function qAnsho(poem) {
   const st = $('#stage'); st.innerHTML = '';
   st.append(el('div', 'kanji', poem.kaminoku));
   if (S.showKana) st.append(el('div', 'kana', poem.kaminoku_kana));
-  const ans = el('div', 'kanji', '　　　　　'); ans.style.opacity = '.25'; st.append(ans);
+  const ans = el('div', 'kanji', '　　　　　'); ans.style.opacity = '.25';
+  const ansKana = el('div', 'kana', ''); st.append(ans, ansKana);
   const board = $('#board'); board.className = 'selfrow'; board.innerHTML = ''; board.style.gridTemplateColumns = '';
   const show = el('button', 'ghost big', 'こたえを みる');
   show.onclick = () => {
     ans.style.opacity = '1'; ans.textContent = poem.shimonoku;
+    if (S.showKana) ansKana.textContent = poem.shimonoku_kana;
     board.innerHTML = '';
     const yes = el('button', 'yes', 'いえた'), no = el('button', 'no', 'いえなかった');
     // 自己申告なので速さは記録しない（§6 モード④）
@@ -450,7 +532,9 @@ function finish() {
   const times = log.filter(l => l.ok && l.ms != null).map(l => l.ms);
   const avg = times.length ? times.reduce((a, b) => a + b, 0) / times.length : null;
   const fast = times.filter(t => t < S.fastMs).length;
-  $('#resultTitle').textContent = ok === log.length ? 'ぜんぶ せいかい！' : 'おつかれさま！';
+  $('#resultTitle').textContent = pickMode === 'oboe'
+    ? `${batch.length}首 やったね！`
+    : (ok === log.length ? 'ぜんぶ せいかい！' : 'おつかれさま！');
   const rs = $('#resultStats'); rs.innerHTML = '';
   const add = (v, s) => { const d = el('div'); d.append(el('b', '', v), el('span', '', s)); rs.append(d); };
   add(`${ok}/${log.length}`, 'せいかい');
