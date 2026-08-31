@@ -1,6 +1,6 @@
 // ふだっち — オフライン用 Service Worker
 // アプリ本体とデータは先にキャッシュする。音源は使った分だけ後から貯める。
-const V = "fudacchi-v8";
+const V = "fudacchi-v10";
 const SHELL = ['./', './index.html', './style.css', './app.js', './srs.js', './manifest.json',
                './data/poems.json', './data/goshoku.json',
                './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png'];
@@ -25,6 +25,15 @@ self.addEventListener('fetch', e => {
       if (res.ok) { const copy = res.clone(); caches.open(V).then(c => c.put(request, copy)); }
       return res;
     }).catch(() => new Response('', { status: 504 }))));
+    return;
+  }
+  // データはネット優先。コードだけ新しくデータが古い、という食い違いを避ける。
+  // つながらないときだけキャッシュを使う。
+  if (url.pathname.includes('/data/')) {
+    e.respondWith(fetch(request).then(res => {
+      if (res.ok) { const copy = res.clone(); caches.open(V).then(c => c.put(request, copy)); }
+      return res;
+    }).catch(() => caches.match(request)));
     return;
   }
   // それ以外はキャッシュ優先。裏で更新を取りにいく

@@ -50,6 +50,13 @@ for (const p of poems) {
   p.shimonoku_lines = [k.slice(0, 5), k.slice(5, 10), k.slice(10)].filter(Boolean);
 }
 
+// 札の裏。五色百人一首は取り札の裏に上の句と作者名が刷ってあり、
+// 試合の合間にこれを見て覚える（向山洋一の設計）。表より字数が多いので3行に均等割り。
+for (const p of poems) {
+  const k = p.kaminoku_kana, per = Math.ceil(k.length / 3);
+  p.kaminoku_lines = [k.slice(0, per), k.slice(per, per * 2), k.slice(per * 2)].filter(Boolean);
+}
+
 // ---- 検証 ----
 let pass = true;
 const fail = (m) => { pass = false; console.log('  ❌ ' + m); };
@@ -85,6 +92,11 @@ const badSplit = poems.filter(p => {
 });
 badSplit.length ? fail('不正: ' + badSplit.map(p=>p.id).join(','))
   : okmsg(`全100首OK（3行目の字数: ${[...new Set(poems.map(p=>p.shimonoku_lines[2].length))].sort().join('・')}）`);
+
+console.log('【検証10】札の裏の行割りがつなげると上の句に戻る');
+const badBack = poems.filter(p => p.kaminoku_lines.join('') !== p.kaminoku_kana
+                              || p.kaminoku_lines.length > 3);
+badBack.length ? fail('不正: ' + badBack.map(p=>p.id).join(',')) : okmsg('全100首OK');
 
 console.log('【検証5】五色＝各20首・1〜100が過不足なく1回');
 const ids = Object.values(GOSHOKU).flat();

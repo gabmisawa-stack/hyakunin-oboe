@@ -140,6 +140,11 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:0;background:none
          font-size:var(--fsz,1rem)}
 .fuda:active{transform:scale(.97)}
 .fuda .km{color:var(--suou);font-weight:600}
+/* 札の裏。表と地色を変えて、めくったことが一目で分かるようにする */
+.fuda.flipped{background:#efe4c8;border-style:double;border-width:6px}
+.fuda .t.back{line-height:1.6}
+.fuda .t.back .km{color:#9a7a1e;font-weight:700}
+.fuda .t.back .au{font-size:.62em;color:#7a6c58;letter-spacing:.02em}
 .fuda.correct{background:color-mix(in srgb,var(--ok) 22%,var(--fuda));
               border-color:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 35%,transparent)}
 .fuda.wrong{background:color-mix(in srgb,var(--ng) 18%,var(--fuda));border-color:var(--ng);

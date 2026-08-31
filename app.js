@@ -3,7 +3,7 @@
 
 import { emptyRecord, gradeRecord, orderPool, isWeak, pickDistractors } from './srs.js';
 
-const BUILD = '1.2.0 / 2026-09-01';   // 設定画面に出す。iPadが古い版を掴んでいないかの確認用
+const BUILD = '1.3.0 / 2026-09-01';   // 設定画面に出す。iPadが古い版を掴んでいないかの確認用
 
 const $ = s => document.querySelector(s);
 const el = (t, c, x) => { const n = document.createElement(t); if (c) n.className = c;
@@ -27,7 +27,7 @@ const MODES = [
 // 「はやい」の基準。本物の朗詠は節回しがあり、3秒では決まり字まで読まれない（晴の指摘）。
 const FAST_CHOICES = [4000, 5000, 7000];
 const DEF_SETTINGS = { cardCount:8, sessionLen:20, showKana:true, colorHint:true,
-                       stopOnCorrect:true, fastMs:5000, profile:'なつ' };
+                       stopOnCorrect:true, fastMs:5000, previewFlip:true, profile:'なつ' };
 let S = { ...DEF_SETTINGS, ...JSON.parse(localStorage.getItem('fudacchi.settings') || '{}') };
 if (!FAST_CHOICES.includes(S.fastMs)) S.fastMs = 5000;   // 旧設定(3秒)からの引っ越し
 const saveSettings = () => localStorage.setItem('fudacchi.settings', JSON.stringify(S));
@@ -300,12 +300,25 @@ function fudaGrid(poem, pool, n, onPick, opt = {}) {
       f.style.borderColor = GOSHOKU.colors[c.color].hex;
       f.dataset.tinted = '1';       // 縁の太さは fitFuda が札の実寸から決める
     }
+    f._poem = c;
     f.onclick = () => onPick(c, f, nodes);
     nodes.set(c.id, f); board.append(f);
   }
   fitFuda();
   return nodes;
 }
+
+/** 札をめくる（表＝下の句 ⇄ 裏＝上の句と作者） */
+function flipFuda(f) {
+  const c = f._poem; if (!c) return;
+  const toBack = !f.classList.contains('flipped');
+  f.classList.toggle('flipped', toBack);
+  f.innerHTML = '';
+  f.append(toBack ? fudaBack(c) : fudaText(c.shimonoku_lines));
+  fitFuda();
+}
+const unflipAll = () => document.querySelectorAll('#board .fuda.flipped')
+  .forEach(f => flipFuda(f));
 
 /** 取り札の下の句を、実物と同じ「2行」に割る。
  *  自然な折り返しに任せると3列目が2文字だけ、といった半端な列ができる。
@@ -319,6 +332,37 @@ function fudaText(lines) {
   });
   t.dataset.per = String(Math.max(...lines.map(s => s.length)));
   t.dataset.lines = String(lines.length);
+  return t;
+}
+
+/** 札の裏。上の句（決まり字は金）と作者名。
+ *  五色百人一首は取り札の裏に上の句と作者名が刷ってあり、試合の合間にこれを見て覚える。
+ *  向山洋一が1990年の商品化のときに入れた仕組み。 */
+function fudaBack(poem) {
+  const t = el('span', 't back');
+  let used = 0;
+  const lines = poem.kaminoku_lines || (() => {          // 古いデータでも落ちないように
+    const k = poem.kaminoku_kana, n = Math.ceil(k.length / 3);
+    return [k.slice(0, n), k.slice(n, n * 2), k.slice(n * 2)].filter(Boolean);
+  })();
+  lines.forEach((s, i) => {
+    if (i) t.append(document.createElement('br'));
+    // 決まり字にあたる部分だけ金にする
+    const k = poem.kimariji_len;
+    if (used < k) {
+      const cut = Math.min(s.length, k - used);
+      t.append(el('span', 'km', s.slice(0, cut)));
+      if (cut < s.length) t.append(document.createTextNode(s.slice(cut)));
+    } else t.append(document.createTextNode(s));
+    used += s.length;
+  });
+  t.append(document.createElement('br'));
+  t.append(el('span', 'au', poem.author));
+  // 作者名は .62em で描くので、長さもその割合で見積もる。
+  // そのまま数えると「後京極摂政前太政大臣」に引きずられて全体が小さくなる。
+  t.dataset.per = String(Math.max(...lines.map(s => s.length),
+                                  Math.ceil(poem.author.length * 0.62)));
+  t.dataset.lines = String(lines.length + 1);
   return t;
 }
 
@@ -436,23 +480,40 @@ function qOboeTest(poem, kind) {
 
 /* ---- モード① 札取り ---- */
 function qTori(poem, pool) {
-  const st = $('#stage'); st.innerHTML = '';
-  st.append(el('div', 'hint', '読み上げを きいて、ふだを さがそう'));
-  const bar = el('div', 'timebar'), fill = el('i'); bar.append(fill); st.append(bar);
-  let t0 = performance.now(), done = false;
-  const tick = () => { if (done) return;
-    const ms = performance.now() - t0, r = Math.min(1, ms / S.fastMs);
-    fill.style.width = (r * 100) + '%'; bar.classList.toggle('late', ms >= S.fastMs);
-    requestAnimationFrame(tick); };
-  requestAnimationFrame(tick);
-  const nodes = fudaGrid(poem, pool, S.cardCount, (c, f) => {
-    if (done) return; done = true;
-    const ms = performance.now() - t0;
-    if (S.stopOnCorrect || c.id !== poem.id) Audio_.stop();
-    markAnswer(nodes, poem, c.id);
-    advance(poem, c.id === poem.id, ms);
-  }, { colorHint: S.colorHint });
-  Audio_.play(poem);
+  const st = $('#stage');
+  let t0 = 0, done = false, started = false;
+  let onPick = (c, f) => flipFuda(f);              // 読み始めるまでは、めくるだけ
+  const nodes = fudaGrid(poem, pool, S.cardCount,
+    (c, f) => onPick(c, f), { colorHint: S.colorHint });
+
+  const startReading = () => {
+    started = true; unflipAll();
+    st.innerHTML = '';
+    st.append(el('div', 'hint', '読み上げを きいて、ふだを さがそう'));
+    const bar = el('div', 'timebar'), fill = el('i'); bar.append(fill); st.append(bar);
+    t0 = performance.now();
+    const tick = () => { if (done) return;
+      const ms = performance.now() - t0, r = Math.min(1, ms / S.fastMs);
+      fill.style.width = (r * 100) + '%'; bar.classList.toggle('late', ms >= S.fastMs);
+      requestAnimationFrame(tick); };
+    requestAnimationFrame(tick);
+    onPick = (c) => {
+      if (done) return; done = true;
+      const ms = performance.now() - t0;
+      if (S.stopOnCorrect || c.id !== poem.id) Audio_.stop();
+      markAnswer(nodes, poem, c.id);
+      advance(poem, c.id === poem.id, ms);
+    };
+    Audio_.play(poem);
+  };
+
+  if (!S.previewFlip) return startReading();
+  // 五色百人一首は、試合の合間に札の裏（上の句）を見て覚える。その時間をここに置く。
+  st.innerHTML = '';
+  st.append(el('div', 'hint', 'ふだを タップすると、うらの 上の句が 見える'));
+  const go = el('button', 'start', 'よみはじめる');
+  go.style.margin = '.4rem 0 0'; go.onclick = startReading;
+  st.append(go);
 }
 
 /* ---- モード② 決まり字クイズ ---- */
@@ -611,6 +672,10 @@ function renderSettings() {
         seg([[true,'だす'],[false,'ださない']], S.showKana, v => S.showKana = v));
   field(d, 'ふだに いろを つける', '五色の色を札のふちに出す。色で覚えたいときに',
         seg([[true,'つける'],[false,'つけない']], S.colorHint, v => S.colorHint = v));
+  field(d, 'よむ まえに めくれる',
+        '読み始める前に、札をタップして裏（上の句と作者）を見られる。'
+        + '五色百人一首は取り札の裏に上の句が刷ってあり、試合の合間にそれを見て覚える。その時間',
+        seg([[true,'めくれる'],[false,'めくれない']], S.previewFlip, v => S.previewFlip = v));
   field(d, 'せいかいで 音を とめる',
         'とめる＝取れたらすぐ次へ（テンポ重視）。とめない＝下の句まで最後まで流す（耳で覚える。本物の音源は1首24秒。タップで次へ進める）',
         seg([[true,'とめる'],[false,'とめない']], S.stopOnCorrect, v => S.stopOnCorrect = v));
@@ -781,5 +846,13 @@ function renderAudioCheck() {
   POEMS = pj; GOSHOKU = gj; POEMS.forEach(p => BY_ID[p.id] = p);
   await Audio_.init();
   go('home');
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) {
+    // 新しい版が有効になったら、自動で読み込み直す。
+    // これがないと、コードだけ新しくデータが古い、という食い違いが起きる（実際に起きた）。
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (reloaded) return; reloaded = true; location.reload();
+    });
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
 })();
