@@ -3,7 +3,7 @@
 
 import { emptyRecord, gradeRecord, orderPool, isWeak, pickDistractors } from './srs.js';
 
-const BUILD = '1.1.0 / 2026-08-31';   // 設定画面に出す。iPadが古い版を掴んでいないかの確認用
+const BUILD = '1.1.2 / 2026-08-31';   // 設定画面に出す。iPadが古い版を掴んでいないかの確認用
 
 const $ = s => document.querySelector(s);
 const el = (t, c, x) => { const n = document.createElement(t); if (c) n.className = c;
@@ -314,6 +314,9 @@ function fudaText(lines) {
 function fitFuda() {
   const cards = [...document.querySelectorAll('#board .fuda')];
   if (!cards.length) return;
+  // 画面がまだ立ち上がっていない（ホーム画面追加の直後や、タブが裏にあるとき）と
+  // 札の実寸が0に近く出る。そこで測ると2pxのまま焼き付くので、やり直しにする。
+  if (cards.some(f => f.clientHeight < 40 || f.clientWidth < 30)) return;
   const LH = 1.72, MAX = 76;
   // ① 縁を先に決める（実物の五色札に合わせて札の幅の5%ほど）
   for (const f of cards) {

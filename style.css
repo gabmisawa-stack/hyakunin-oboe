@@ -129,7 +129,8 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:0;background:none
        box-shadow:0 0 0 1px rgba(230,205,126,.18), inset 0 0 40px rgba(0,0,0,.35)}
 .fuda{background:var(--fuda);color:var(--fuda-ink);border:2px solid var(--fuda-line);border-radius:.4rem;
       box-shadow:0 2px 5px rgba(0,0,0,.35);
-      display:flex;align-items:center;justify-content:center;
+      /* 上詰め。中央揃えにすると札ごとに1文字目の高さが変わり、目線がずれて読みにくい */
+      display:flex;align-items:flex-start;justify-content:center;
       height:100%;aspect-ratio:53/73;justify-self:center;align-self:center;max-width:100%;
       padding:.5rem .35rem;overflow:hidden;user-select:none;-webkit-touch-callout:none;
       transition:transform .12s,box-shadow .12s}
