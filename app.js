@@ -465,11 +465,19 @@ function renderSettings() {
   const a = card('よみあげ音声');
   const n = Audio_.importedCount();
   const imp = el('div');
-  const inp = el('input'); inp.type = 'file'; inp.accept = 'audio/*'; inp.multiple = true;
+  // ⚠️ accept は付けない。iOSの「ファイル」では accept="audio/*" を付けると
+  //    Safari が変換するUTIと合わず、mp3やm4aがグレーアウトして選べなくなる。
+  //    代わりに、取り込むときに拡張子で選り分ける。
+  const inp = el('input'); inp.type = 'file'; inp.multiple = true;
   inp.style.display = 'none';
   const btn = el('button', 'ghost', '音源を とりこむ');
   btn.onclick = () => inp.click();
-  inp.onchange = async () => { await importAudio([...inp.files]); renderSettings(); };
+  inp.onchange = async () => {
+    const files = [...inp.files]; inp.value = '';
+    await importAudio(files, msg => { btn.textContent = msg; });
+    btn.textContent = '音源を とりこむ';
+    renderSettings();
+  };
   imp.append(btn, inp);
   field(a, `とりこみずみ ${n} 首`,
         n ? 'この端末の中だけに保存されています。' :
@@ -522,8 +530,16 @@ function mapFiles(files) {
   return null;
 }
 
-async function importAudio(files) {
-  if (!files.length) return;
+const AUDIO_EXT = /\.(mp3|m4a|aac|wav|aif{1,2}|caf|mp4|ogg|oga|opus|flac)$/i;
+
+async function importAudio(all, onProgress) {
+  const files = all.filter(f => AUDIO_EXT.test(f.name));
+  const dropped = all.length - files.length;
+  if (!files.length) {
+    alert(all.length ? `音のファイルが見つかりませんでした（${all.length}件えらばれましたが、音声ではないようです）`
+                     : 'ファイルがえらばれませんでした');
+    return;
+  }
   let mapped = mapFiles(files);
   if (!mapped) {
     const sorted = [...files].sort((a, b) => a.name.localeCompare(b.name, 'ja', { numeric: true }));
@@ -538,8 +554,14 @@ async function importAudio(files) {
     mapped = sorted.map((f, i) => ({ f, id: i + 1 })).filter(x => x.id <= 100);
   }
   let n = 0;
-  for (const { f, id } of mapped) { if (!id) continue; await Audio_.put(id, f); n++; }
-  alert(`${n}首 とりこみました。\n「音源を たしかめる」で、歌と音が合っているか確認してください。`);
+  for (const { f, id } of mapped) {
+    if (!id) continue;
+    await Audio_.put(id, f); n++;
+    onProgress?.(`とりこみ中… ${n} / ${mapped.length}`);
+  }
+  alert(`${n}首 とりこみました。` +
+        (dropped ? `\n（音声でないファイル ${dropped}件 はとばしました）` : '') +
+        `\n\n「音源を たしかめる」で、歌と音が合っているか確認してください。`);
 }
 
 function renderAudioCheck() {
