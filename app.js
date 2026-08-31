@@ -3,7 +3,7 @@
 
 import { emptyRecord, gradeRecord, orderPool, isWeak, pickDistractors } from './srs.js';
 
-const BUILD = '1.0.4 / 2026-08-31';   // 設定画面に出す。iPadが古い版を掴んでいないかの確認用
+const BUILD = '1.1.0 / 2026-08-31';   // 設定画面に出す。iPadが古い版を掴んでいないかの確認用
 
 const $ = s => document.querySelector(s);
 const el = (t, c, x) => { const n = document.createElement(t); if (c) n.className = c;
@@ -22,10 +22,25 @@ const MODES = [
 ];
 
 /* ==================== 保存 ==================== */
+// 「はやい」の基準。本物の朗詠は節回しがあり、3秒では決まり字まで読まれない（晴の指摘）。
+const FAST_CHOICES = [4000, 5000, 7000];
 const DEF_SETTINGS = { cardCount:8, sessionLen:20, showKana:true, colorHint:true,
-                       stopOnCorrect:true, fastMs:3000, profile:'natsu' };
+                       stopOnCorrect:true, fastMs:5000, profile:'なつ' };
 let S = { ...DEF_SETTINGS, ...JSON.parse(localStorage.getItem('fudacchi.settings') || '{}') };
+if (!FAST_CHOICES.includes(S.fastMs)) S.fastMs = 5000;   // 旧設定(3秒)からの引っ越し
 const saveSettings = () => localStorage.setItem('fudacchi.settings', JSON.stringify(S));
+
+/* ---- つかう人（プロフィール）---- */
+// 記録は fudacchi.progress.<名前> に分かれて入る。切り替えても互いに影響しない。
+const PROFILES_KEY = 'fudacchi.profiles';
+const profiles = () => {
+  const l = JSON.parse(localStorage.getItem(PROFILES_KEY) || 'null');
+  if (l && l.length) return l;
+  const init = [S.profile || 'なつ'];
+  localStorage.setItem(PROFILES_KEY, JSON.stringify(init));
+  return init;
+};
+const saveProfiles = l => localStorage.setItem(PROFILES_KEY, JSON.stringify(l));
 
 const progKey = () => `fudacchi.progress.${S.profile}`;
 let P = JSON.parse(localStorage.getItem(progKey()) || '{}');
@@ -106,6 +121,26 @@ const Audio_ = (() => {
   };
 })();
 
+/* ==================== 小さな選択ダイアログ ==================== */
+function pickDialog(title, items) {
+  return new Promise(res => {
+    const bg = el('div', 'modalbg');
+    const box = el('div', 'modal');
+    box.append(el('h3', '', title));
+    for (const it of items) {
+      const b = el('button', 'modalitem' + (it.mark ? ' on' : ''), it.label);
+      b.onclick = () => { bg.remove(); res(it.value); };
+      box.append(b);
+    }
+    const cancel = el('button', 'modalitem cancel', 'やめる');
+    cancel.onclick = () => { bg.remove(); res(null); };
+    box.append(cancel);
+    bg.append(box);
+    bg.onclick = e => { if (e.target === bg) { bg.remove(); res(null); } };
+    document.body.append(bg);
+  });
+}
+
 /* ==================== 画面遷移 ==================== */
 const SCREENS = ['home', 'session', 'result', 'stats', 'settings'];
 function go(name) {
@@ -153,7 +188,34 @@ function renderHome() {
     mw.append(b);
   }
   $('#startBtn').disabled = !pickColor;
+  const ub = $('#userBtn');
+  ub.textContent = S.profile + ' ▾';
+  ub.onclick = openProfilePicker;
 }
+function useProfile(name) {
+  S.profile = name; saveSettings();
+  P = JSON.parse(localStorage.getItem(progKey()) || '{}');
+  renderHome();
+}
+
+async function openProfilePicker() {
+  const list = profiles();
+  const v = await pickDialog('だれが つかう？', [
+    ...list.map(n => ({ label: n + (n === S.profile ? '　（いま）' : ''), value: n, mark: n === S.profile })),
+    { label: '＋ あたらしい ひとを ふやす', value: '__new__' },
+  ]);
+  if (!v) return;
+  if (v === '__new__') {
+    const name = (prompt('なまえを いれてね') || '').trim();
+    if (!name) return;
+    if (list.includes(name)) { alert('もう いるよ'); return useProfile(name); }
+    if (name.length > 12) { alert('なまえが ながすぎます（12文字まで）'); return; }
+    saveProfiles([...list, name]);
+    useProfile(name);
+    alert(`${name} を ふやしました。きろくは まっさらから はじまります。`);
+  } else useProfile(v);
+}
+
 $('#startBtn').onclick = () => startSession();
 $('#againBtn').onclick = () => startSession();
 
@@ -452,8 +514,10 @@ function renderSettings() {
         seg([[4,'4'],[8,'8'],[16,'16']], S.cardCount, v => S.cardCount = v));
   field(g, '1かいの もんだいすう', '五色の一色ぶんは20首',
         seg([[10,'10'],[20,'20'],[100,'ぜんぶ']], S.sessionLen, v => S.sessionLen = v));
-  field(g, '「はやい」の きじゅん', 'これより遅い正解は、おぼえた扱いにしない（§7.2）',
-        seg([[2000,'2秒'],[3000,'3秒'],[5000,'5秒']], S.fastMs, v => S.fastMs = v));
+  field(g, '「はやい」の きじゅん',
+        'これより遅い正解は、おぼえた扱いにしない。本物の朗詠は節回しがあるので、'
+        + '3秒では決まり字まで読まれない。ふつうは5秒',
+        seg([[4000,'4秒'],[5000,'5秒'],[7000,'7秒']], S.fastMs, v => S.fastMs = v));
 
   const d = card('ひょうじ');
   field(d, 'ふりがな（かな）を だす', '上の句→下の句・暗唱チェックで、かなを添える',
@@ -511,6 +575,22 @@ function renderSettings() {
     } catch { alert('読みこめませんでした'); } };
   const iw = el('div'); iw.append(ib, imp2);
   field(k, 'きろくを 読みこむ', '書き出したファイルから元に戻す', iw);
+  const who = card('つかう ひと');
+  const sw = el('button', 'ghost', 'きりかえる／ふやす');
+  sw.onclick = () => openProfilePicker().then(renderSettings);
+  field(who, `いまは ${S.profile}`,
+        `${profiles().join('・')} が登録されています。記録は人ごとに分かれます`, sw);
+  if (profiles().length > 1) {
+    const del = el('button', 'ghost', 'この人を けす');
+    del.onclick = () => {
+      if (!confirm(`${S.profile} と、その記録をぜんぶ消しますか？もどせません`)) return;
+      const rest = profiles().filter(n => n !== S.profile);
+      localStorage.removeItem(progKey());
+      saveProfiles(rest); useProfile(rest[0]); renderSettings();
+    };
+    field(who, `${S.profile} を けす`, '記録もいっしょに消えます', del);
+  }
+
   const app = card('アプリ');
   field(app, `いまの版　${BUILD}`,
         'うまく動かないときは、まずここを見る。私に伝えるときもこの番号を', el('span'));
