@@ -122,7 +122,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:0;background:none
 .timebar.late i{background:var(--ng)}
 
 .board{flex:1 1 auto;display:grid;gap:.5rem;align-content:center;justify-content:center;
-       grid-auto-rows:1fr;min-height:0;
+       grid-auto-rows:auto;min-height:0;overflow:hidden;
        /* 競技かるたは毛氈の上で取る */
        background:radial-gradient(ellipse 80% 70% at 50% 45%, #4a2531, var(--mousen) 70%, #2e1720);
        border-radius:.6rem;padding:.9rem;
@@ -131,7 +131,10 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:0;background:none
       box-shadow:0 2px 5px rgba(0,0,0,.35);
       /* 上詰め。中央揃えにすると札ごとに1文字目の高さが変わり、目線がずれて読みにくい */
       display:flex;align-items:flex-start;justify-content:center;
-      height:100%;aspect-ratio:53/73;justify-self:center;align-self:center;max-width:100%;
+      /* 大きさは app.js の layoutBoard() が実寸で入れる。
+         aspect-ratio と height:100% と max-width:100% を一緒に指定すると、
+         CSSは縦を優先して比率を捨てる（4枚のとき 243×532＝比0.46 になった）。 */
+      aspect-ratio:53/73;justify-self:center;align-self:center;
       padding:.5rem .35rem;overflow:hidden;user-select:none;-webkit-touch-callout:none;
       transition:transform .12s,box-shadow .12s}
 /* 札の文字。大きさは app.js が札の実寸から決める（--fsz） */

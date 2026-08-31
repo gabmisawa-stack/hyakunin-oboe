@@ -3,7 +3,7 @@
 
 import { emptyRecord, gradeRecord, orderPool, isWeak, pickDistractors } from './srs.js';
 
-const BUILD = '1.3.0 / 2026-09-01';   // 設定画面に出す。iPadが古い版を掴んでいないかの確認用
+const BUILD = '1.3.1 / 2026-09-01';   // 設定画面に出す。iPadが古い版を掴んでいないかの確認用
 
 const $ = s => document.querySelector(s);
 const el = (t, c, x) => { const n = document.createElement(t); if (c) n.className = c;
@@ -284,14 +284,6 @@ async function advance(poem, ok, ms, kind) {
 function fudaGrid(poem, pool, n, onPick, opt = {}) {
   const board = $('#board'); board.className = 'board'; board.innerHTML = '';
   const cards = shuffle([poem, ...distractors(poem, pool, n - 1)]);
-  // 札が縦長（53:73）に収まるよう盤面の縦横から理想の列数を出し、
-  // そのうえで枚数を割り切れる列数に寄せる（端の行が欠けるのを避ける）
-  const bw = board.clientWidth || 1100, bh = board.clientHeight || 420;
-  const ideal = Math.sqrt(cards.length * bw / (bh * 0.73)) || 1;
-  const divs = [];
-  for (let i = 1; i <= cards.length; i++) if (cards.length % i === 0) divs.push(i);
-  const cols = divs.reduce((a, b) => Math.abs(b - ideal) < Math.abs(a - ideal) ? b : a);
-  board.style.gridTemplateColumns = `repeat(${cols},minmax(0,1fr))`;
   const nodes = new Map();
   for (const c of cards) {
     const f = el('button', 'fuda');
@@ -335,6 +327,35 @@ function fudaText(lines) {
   return t;
 }
 
+/** 盤の並びと札の実寸を決める。
+ *  ★ CSSの aspect-ratio に任せてはいけない。height:100% や max-width:100% と
+ *    組み合わさると比率が捨てられ、4枚のときに縦長の短冊になる（実際になった）。
+ *  列数は「札がいちばん大きくなる並び」を、枚数を割り切れる候補から選ぶ。 */
+const FUDA_RATIO = 53 / 73;
+function layoutBoard() {
+  const board = $('#board');
+  const cards = [...board.querySelectorAll('.fuda')];
+  if (!cards.length) return;
+  const cs = getComputedStyle(board), GAP = parseFloat(cs.gap) || 8;
+  const availW = board.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  const availH = board.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+  if (availW < 40 || availH < 40) return;
+  const n = cards.length;
+  let best = null;
+  for (let cols = 1; cols <= n; cols++) {
+    if (n % cols) continue;                       // 端の行が欠けない並びだけ
+    const rows = n / cols;
+    const cw = (availW - GAP * (cols - 1)) / cols;
+    const ch = (availH - GAP * (rows - 1)) / rows;
+    const w = Math.min(cw, ch * FUDA_RATIO);      // はみ出さない側で決める
+    if (w > 0 && (!best || w > best.w)) best = { w, h: w / FUDA_RATIO, cols };
+  }
+  if (!best) return;
+  board.style.gridTemplateColumns = `repeat(${best.cols}, max-content)`;
+  const w = Math.floor(best.w) + 'px', h = Math.floor(best.h) + 'px';
+  cards.forEach(f => { f.style.width = w; f.style.height = h; });
+}
+
 /** 札の裏。上の句（決まり字は金）と作者名。
  *  五色百人一首は取り札の裏に上の句と作者名が刷ってあり、試合の合間にこれを見て覚える。
  *  向山洋一が1990年の商品化のときに入れた仕組み。 */
@@ -373,6 +394,7 @@ function fudaBack(poem) {
  *  ★ 計算だけに頼らず、はみ出さなくなるまで実測で詰める。折り返しの切り上げが
  *    1文字ずれるだけで列数が変わるため。 */
 function fitFuda() {
+  layoutBoard();
   const cards = [...document.querySelectorAll('#board .fuda')];
   if (!cards.length) return;
   // 画面がまだ立ち上がっていない（ホーム画面追加の直後や、タブが裏にあるとき）と
