@@ -1,0 +1,75 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#1b2430">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ふだっち">
+<title>ふだっち</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="stylesheet" href="style.css">
+
+<!-- ============ ホーム ============ -->
+<section id="home" class="screen">
+  <header class="apphead hero">
+    <div class="brand">
+      <span class="seal">歌</span>
+      <h1>ふだっち</h1>
+      <span class="sub">百人一首　おぼえかるた</span>
+    </div>
+    <div class="headbtns">
+      <button class="ghost" data-go="stats">せいせき</button>
+      <button class="ghost" data-go="settings">せってい</button>
+    </div>
+  </header>
+
+  <div class="pick">
+    <h2>いろを えらぶ</h2>
+    <div id="colorPicks" class="colorpicks"></div>
+  </div>
+
+  <div class="pick">
+    <h2>れんしゅうの しかた</h2>
+    <div id="modePicks" class="modepicks"></div>
+  </div>
+
+  <button id="startBtn" class="start" disabled>はじめる</button>
+</section>
+
+<!-- ============ セッション ============ -->
+<section id="session" class="screen">
+  <header class="sesshead">
+    <button class="ghost" id="quitBtn">やめる</button>
+    <div class="progressbar"><div id="progFill"></div></div>
+    <div id="counter" class="counter">1 / 20</div>
+  </header>
+
+  <div id="stage" class="stage"></div>
+  <div id="board" class="board"></div>
+  <div id="feedback" class="feedback"></div>
+</section>
+
+<!-- ============ 結果 ============ -->
+<section id="result" class="screen">
+  <h2 id="resultTitle">おつかれさま！</h2>
+  <div id="resultStats" class="resultstats"></div>
+  <div id="resultWeak" class="weaklist"></div>
+  <div class="row">
+    <button class="start" data-go="home">ホームへ</button>
+    <button class="ghost big" id="againBtn">もういちど</button>
+  </div>
+</section>
+
+<!-- ============ せいせき ============ -->
+<section id="stats" class="screen">
+  <header class="apphead"><h2>せいせき</h2><button class="ghost" data-go="home">もどる</button></header>
+  <div id="statsBody" class="statsbody"></div>
+</section>
+
+<!-- ============ せってい ============ -->
+<section id="settings" class="screen">
+  <header class="apphead"><h2>せってい</h2><button class="ghost" data-go="home">もどる</button></header>
+  <div id="settingsBody" class="settingsbody"></div>
+</section>
+
+<script type="module" src="app.js"></script>

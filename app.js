@@ -1,0 +1,576 @@
+// ふだっち — 百人一首おぼえアプリ
+// 仕様書 §5〜§8 の実装。ビルド不要・依存ライブラリなし。
+
+import { emptyRecord, gradeRecord, orderPool, isWeak, pickDistractors } from './srs.js';
+
+const $ = s => document.querySelector(s);
+const el = (t, c, x) => { const n = document.createElement(t); if (c) n.className = c;
+                          if (x != null) n.textContent = x; return n; };
+const shuffle = a => { for (let i = a.length - 1; i > 0; i--) {
+                         const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/* ==================== データ ==================== */
+let POEMS = [], GOSHOKU = null, BY_ID = {};
+const MODES = [
+  { id:'tori',  nm:'札取り',        ds:'読み上げを聞いて、取り札をタップ。競技かるた本番に一番近い形' },
+  { id:'kimari',nm:'決まり字クイズ',ds:'一文字ずつ出てくる。何文字目で分かるかを記録する' },
+  { id:'match', nm:'上の句→下の句', ds:'上の句を見て下の句を選ぶ。音を出さずにできる' },
+  { id:'ansho', nm:'暗唱チェック',  ds:'下の句を思い出してから答え合わせ。自己申告' },
+];
+
+/* ==================== 保存 ==================== */
+const DEF_SETTINGS = { cardCount:8, sessionLen:20, showKana:true, colorHint:true,
+                       stopOnCorrect:true, fastMs:3000, profile:'natsu' };
+let S = { ...DEF_SETTINGS, ...JSON.parse(localStorage.getItem('fudacchi.settings') || '{}') };
+const saveSettings = () => localStorage.setItem('fudacchi.settings', JSON.stringify(S));
+
+const progKey = () => `fudacchi.progress.${S.profile}`;
+let P = JSON.parse(localStorage.getItem(progKey()) || '{}');
+const saveProgress = () => localStorage.setItem(progKey(), JSON.stringify(P));
+const rec = id => P[id] || (P[id] = emptyRecord());
+
+/* ==================== 出題 ==================== */
+const grade = (id, ok, ms) => {
+  const v = gradeRecord(rec(id), ok, ms, S.fastMs, Date.now());
+  saveProgress(); return v;
+};
+const selectPoems = (pool, n) => orderPool(pool, P, Date.now()).slice(0, n);
+const distractors = (target, pool, k) => pickDistractors(target, pool, k);
+
+/* ==================== 音声 ==================== */
+const Audio_ = (() => {
+  let db = null, unlocked = false, cur = null, has = new Set();
+  const openDB = () => new Promise(res => {
+    const rq = indexedDB.open('fudacchi', 1);
+    rq.onupgradeneeded = () => rq.result.createObjectStore('audio');
+    rq.onsuccess = () => res(rq.result);
+    rq.onerror = () => res(null);
+  });
+  const tx = (mode, fn) => new Promise(res => {
+    if (!db) return res(null);
+    const t = db.transaction('audio', mode); const r = fn(t.objectStore('audio'));
+    if (r) { r.onsuccess = () => res(r.result); r.onerror = () => res(null); }
+    else t.oncomplete = () => res(true);
+  });
+  return {
+    async init() {
+      db = await openDB();
+      const keys = await tx('readonly', s => s.getAllKeys());
+      (keys || []).forEach(k => has.add(k));
+    },
+    importedCount: () => has.size,
+    async put(id, blob) { await tx('readwrite', s => s.put(blob, id)); has.add(id); },
+    async clear() { await tx('readwrite', s => s.clear()); has.clear(); },
+    unlock() {
+      if (unlocked) return; unlocked = true;
+      try { const u = new SpeechSynthesisUtterance(''); u.volume = 0; speechSynthesis.speak(u); } catch {}
+      const a = new Audio(); a.muted = true; a.play().catch(() => {});
+    },
+    source(id) { return has.has(id) ? 'file' : 'librivox'; },
+    playing() { return !!(cur && !cur.paused && !cur.ended); },
+    /** いま鳴っている音が終わるまで待つ。鳴っていなければすぐ返る。 */
+    whenDone() {
+      if (!this.playing()) return Promise.resolve();
+      const a = cur;
+      return new Promise(res => {
+        const done = () => { a.removeEventListener('ended', done);
+                             a.removeEventListener('pause', done); res(); };
+        a.addEventListener('ended', done); a.addEventListener('pause', done);
+      });
+    },
+    stop() { if (cur) { cur.pause(); cur = null; } try { speechSynthesis.cancel(); } catch {} },
+    // 取り込んだ音源 → LibriVox(PD) → iPadの合成音声 の順に落ちる
+    async play(poem, onEnd) {
+      this.stop();
+      const tryEl = async src => new Promise(res => {
+        const a = new Audio(src); cur = a;
+        a.onended = () => { onEnd?.(); res(true); };
+        a.onerror = () => res(false);
+        a.play().then(() => {}).catch(() => res(false));
+        setTimeout(() => { if (a.currentTime > 0 || !a.paused) res(true); }, 400);
+      });
+      if (has.has(poem.id)) {
+        const blob = await tx('readonly', s => s.get(poem.id));
+        if (blob && await tryEl(URL.createObjectURL(blob))) return 'file';
+      }
+      if (await tryEl(`audio/lv/${String(poem.id).padStart(3, '0')}.m4a`)) return 'librivox';
+      try {
+        const u = new SpeechSynthesisUtterance(poem.kaminoku_kana + '、' + poem.shimonoku_kana);
+        u.lang = 'ja-JP'; u.rate = 0.75; u.onend = () => onEnd?.();
+        speechSynthesis.speak(u); return 'synth';
+      } catch { onEnd?.(); return 'none'; }
+    },
+  };
+})();
+
+/* ==================== 画面遷移 ==================== */
+const SCREENS = ['home', 'session', 'result', 'stats', 'settings'];
+function go(name) {
+  SCREENS.forEach(s => $('#' + s).classList.toggle('on', s === name));
+  if (name === 'stats') renderStats();
+  if (name === 'settings') renderSettings();
+  if (name === 'home') renderHome();
+}
+document.addEventListener('click', e => {
+  Audio_.unlock();
+  const g = e.target.closest('[data-go]'); if (g) go(g.dataset.go);
+});
+
+/* ==================== ホーム ==================== */
+let pickColor = null, pickMode = 'tori';
+
+function poolFor(key) {
+  if (key === 'all') return POEMS.slice();
+  if (key === 'weak') return POEMS.filter(p => isWeak(p, P));
+  return POEMS.filter(p => p.color === key);
+}
+const mastered = pool => pool.filter(p => (P[p.id]?.box ?? 0) >= 4).length;
+
+function renderHome() {
+  const cw = $('#colorPicks'); cw.innerHTML = '';
+  const items = [...Object.entries(GOSHOKU.colors).map(([k, v]) => ({ k, nm: v.label, hex: v.hex })),
+                 { k:'all', nm:'ぜんぶ', hex:'var(--accent)' },
+                 { k:'weak', nm:'にがてだけ', hex:'var(--ng)' }];
+  for (const it of items) {
+    const pool = poolFor(it.k), m = mastered(pool);
+    const b = el('button', 'cbtn'); b.style.setProperty('--dot', it.hex);
+    b.setAttribute('aria-pressed', String(pickColor === it.k));
+    b.append(el('span', 'nm', it.nm), el('span', 'mt', `${m} / ${pool.length}`));
+    const bar = el('div', 'bar'), i = el('i'); i.style.width = pool.length ? (m / pool.length * 100) + '%' : '0';
+    bar.append(i); b.append(bar);
+    b.onclick = () => { pickColor = it.k; renderHome(); };
+    if (!pool.length) b.disabled = true;
+    cw.append(b);
+  }
+  const mw = $('#modePicks'); mw.innerHTML = '';
+  for (const m of MODES) {
+    const b = el('button', 'mbtn'); b.setAttribute('aria-pressed', String(pickMode === m.id));
+    b.append(el('span', 'nm', m.nm), el('span', 'ds', m.ds));
+    b.onclick = () => { pickMode = m.id; renderHome(); };
+    mw.append(b);
+  }
+  $('#startBtn').disabled = !pickColor;
+}
+$('#startBtn').onclick = () => startSession();
+$('#againBtn').onclick = () => startSession();
+
+/* ==================== セッション ==================== */
+let Q = [], qi = 0, log = [];
+
+function startSession() {
+  const pool = poolFor(pickColor);
+  Q = selectPoems(pool, Math.min(S.sessionLen, pool.length));
+  qi = 0; log = [];
+  go('session'); nextQuestion();
+}
+$('#quitBtn').onclick = () => { Audio_.stop(); go('home'); };
+
+function nextQuestion() {
+  Audio_.stop();
+  if (qi >= Q.length) return finish();
+  $('#progFill').style.width = (qi / Q.length * 100) + '%';
+  $('#counter').textContent = `${qi + 1} / ${Q.length}`;
+  $('#feedback').className = 'feedback'; $('#feedback').textContent = '';
+  const poem = Q[qi], pool = poolFor(pickColor);
+  ({ tori: qTori, kimari: qKimari, match: qMatch, ansho: qAnsho })[pickMode](poem, pool);
+}
+
+function say(msg, kind) { const f = $('#feedback'); f.textContent = msg; f.className = 'feedback ' + (kind || ''); }
+
+const tapOnce = () => new Promise(res =>
+  addEventListener('pointerdown', res, { once: true }));
+
+async function advance(poem, ok, ms, kind) {
+  const g = grade(poem.id, ok, ms);
+  log.push({ id: poem.id, ok, ms });
+  const msg = ok ? (g === 'slow' ? `おしい！ ${(ms/1000).toFixed(1)}秒。もうすこし はやく`
+                                 : `せいかい！ ${ms != null ? (ms/1000).toFixed(1) + '秒' : ''}`)
+                 : `${poem.kimariji} — ${poem.shimonoku}`;
+  // 「せいかいで音をとめる」を切っているときは、読み上げを最後まで聞かせる。
+  // 本物の音源は1首24秒あるので、ここで待たないと下の句が一度も耳に入らない。
+  if (ok && !S.stopOnCorrect && Audio_.playing()) {
+    say(msg + '　……さいごまで きいてね（タップで つぎへ）', 'ok');
+    await Promise.race([Audio_.whenDone(), tapOnce()]);
+  } else {
+    say(msg, ok ? 'ok' : 'ng');
+    await sleep(ok ? 900 : 2000);
+  }
+  qi++; nextQuestion();
+}
+
+/* ---- 札を描く ---- */
+function fudaGrid(poem, pool, n, onPick, opt = {}) {
+  const board = $('#board'); board.className = 'board'; board.innerHTML = '';
+  const cards = shuffle([poem, ...distractors(poem, pool, n - 1)]);
+  // 札が縦長（53:73）に収まるよう盤面の縦横から理想の列数を出し、
+  // そのうえで枚数を割り切れる列数に寄せる（端の行が欠けるのを避ける）
+  const bw = board.clientWidth || 1100, bh = board.clientHeight || 420;
+  const ideal = Math.sqrt(cards.length * bw / (bh * 0.73)) || 1;
+  const divs = [];
+  for (let i = 1; i <= cards.length; i++) if (cards.length % i === 0) divs.push(i);
+  const cols = divs.reduce((a, b) => Math.abs(b - ideal) < Math.abs(a - ideal) ? b : a);
+  board.style.gridTemplateColumns = `repeat(${cols},minmax(0,1fr))`;
+  const nodes = new Map();
+  for (const c of cards) {
+    const f = el('button', 'fuda');
+    f.append(fudaText(c.shimonoku_lines));
+    if (opt.colorHint && GOSHOKU.colors[c.color]) {
+      f.style.borderColor = GOSHOKU.colors[c.color].hex;
+      f.dataset.tinted = '1';       // 縁の太さは fitFuda が札の実寸から決める
+    }
+    f.onclick = () => onPick(c, f, nodes);
+    nodes.set(c.id, f); board.append(f);
+  }
+  fitFuda();
+  return nodes;
+}
+
+/** 取り札の下の句を、実物と同じ「2行」に割る。
+ *  自然な折り返しに任せると3列目が2文字だけ、といった半端な列ができる。
+ *  行の分け方は data/poems.json の shimonoku_lines（tools/build.mjs が算出）。
+ *  実物は3行・上2行が5文字・3行目が残り。句の切れ目では割らない。 */
+function fudaText(lines) {
+  const t = el('span', 't');
+  lines.forEach((s, i) => {
+    if (i) t.append(document.createElement('br'));
+    t.append(document.createTextNode(s));
+  });
+  t.dataset.per = String(Math.max(...lines.map(s => s.length)));
+  t.dataset.lines = String(lines.length);
+  return t;
+}
+
+/** 札の文字を、札の実寸いっぱいまで大きくする。
+ *  縦書きなので「1列に何文字入るか」で決まる。実物の取り札は下の句を2行に書く。
+ *  ★ 縁の太さを先に確定させてから測る。縁を後から太くすると中身の幅が減り、
+ *    列が1つ増えて横にはみ出す（実際に踏んだ）。
+ *  ★ 計算だけに頼らず、はみ出さなくなるまで実測で詰める。折り返しの切り上げが
+ *    1文字ずれるだけで列数が変わるため。 */
+function fitFuda() {
+  const cards = [...document.querySelectorAll('#board .fuda')];
+  if (!cards.length) return;
+  const LH = 1.72, MAX = 76;
+  // ① 縁を先に決める（実物の五色札に合わせて札の幅の5%ほど）
+  for (const f of cards) {
+    if (f.dataset.tinted) {
+      const outer = f.getBoundingClientRect().width;
+      f.style.borderWidth = Math.max(4, Math.round(outer * 0.05)) + 'px';
+    }
+  }
+  // ② 縁を反映させたうえで文字の大きさを出す
+  for (const f of cards) {
+    const t = f.querySelector('.t'); if (!t) continue;
+    const H = f.clientHeight, W = f.clientWidth;
+    const perCol = +t.dataset.per || t.textContent.length;
+    const cols = +t.dataset.lines || 2;
+    let px = Math.min(H / (perCol * 1.06), W / (cols * LH), MAX);
+    // ③ 実際にはみ出さなくなるまで詰める
+    for (let i = 0; i < 14; i++) {
+      t.style.setProperty('--fsz', Math.floor(px) + 'px');
+      if (t.scrollWidth <= W && t.scrollHeight <= H) break;
+      px *= 0.94;
+      if (px < 9) break;
+    }
+  }
+}
+// 盤面の大きさが変わったら測り直す。
+// 決まり字クイズは上の句が1文字ずつ伸びるので、その途中で盤面が縮む。
+// 最初に測った寸法のままだと札からあふれて4行になる（実際に起きた）。
+let fitTimer;
+const refit = () => { clearTimeout(fitTimer); fitTimer = setTimeout(fitFuda, 60); };
+addEventListener('resize', refit);
+addEventListener('orientationchange', refit);
+new ResizeObserver(refit).observe($('#board'));
+const markAnswer = (nodes, poem, picked) => {
+  nodes.forEach((n, id) => { n.onclick = null; if (id !== poem.id) n.classList.add('dim'); });
+  nodes.get(poem.id).classList.remove('dim');
+  nodes.get(poem.id).classList.add('correct');
+  if (picked && picked !== poem.id) nodes.get(picked)?.classList.add('wrong');
+};
+
+/* ---- モード① 札取り ---- */
+function qTori(poem, pool) {
+  const st = $('#stage'); st.innerHTML = '';
+  st.append(el('div', 'hint', '読み上げを きいて、ふだを さがそう'));
+  const bar = el('div', 'timebar'), fill = el('i'); bar.append(fill); st.append(bar);
+  let t0 = performance.now(), done = false;
+  const tick = () => { if (done) return;
+    const ms = performance.now() - t0, r = Math.min(1, ms / S.fastMs);
+    fill.style.width = (r * 100) + '%'; bar.classList.toggle('late', ms >= S.fastMs);
+    requestAnimationFrame(tick); };
+  requestAnimationFrame(tick);
+  const nodes = fudaGrid(poem, pool, S.cardCount, (c, f) => {
+    if (done) return; done = true;
+    const ms = performance.now() - t0;
+    if (S.stopOnCorrect || c.id !== poem.id) Audio_.stop();
+    markAnswer(nodes, poem, c.id);
+    advance(poem, c.id === poem.id, ms);
+  }, { colorHint: S.colorHint });
+  Audio_.play(poem);
+}
+
+/* ---- モード② 決まり字クイズ ---- */
+function qKimari(poem, pool) {
+  const st = $('#stage'); st.innerHTML = '';
+  const line = el('div', 'big', ''); line.style.minHeight = '1.4em';   // 伸びても盤面が動かないように
+  const note = el('div', 'hint', 'なんもじで わかるかな？');
+  st.append(line, note);
+  let shown = 0, done = false, t0 = performance.now();
+  const timer = setInterval(() => {
+    if (done || shown >= poem.kaminoku_kana.length) return clearInterval(timer);
+    shown++;
+    line.innerHTML = '';
+    const k = poem.kimariji_len;
+    line.append(el('span', shown >= k ? 'reveal' : '', poem.kaminoku_kana.slice(0, Math.min(shown, k))));
+    if (shown > k) line.append(el('span', '', poem.kaminoku_kana.slice(k, shown)));
+    if (shown === k) note.textContent = `ここまでが 決まり字（${k}もじ）`;
+  }, 450);
+  const nodes = fudaGrid(poem, pool, S.cardCount, (c) => {
+    if (done) return; done = true; clearInterval(timer);
+    const ms = performance.now() - t0, ok = c.id === poem.id;
+    markAnswer(nodes, poem, c.id);
+    line.innerHTML = ''; line.append(el('span', 'reveal', poem.kimariji),
+                                     el('span', '', poem.kaminoku_kana.slice(poem.kimariji_len)));
+    note.textContent = ok ? `${shown}もじ目で とれた（決まり字は${poem.kimariji_len}もじ）` : '';
+    advance(poem, ok, ms);
+  }, { colorHint: S.colorHint });
+}
+
+/* ---- モード③ 上の句→下の句 ---- */
+function qMatch(poem, pool) {
+  const st = $('#stage'); st.innerHTML = '';
+  st.append(el('div', 'kanji', poem.kaminoku));
+  if (S.showKana) st.append(el('div', 'kana', poem.kaminoku_kana));
+  st.append(el('div', 'hint', 'しもの句を えらぼう'));
+  const board = $('#board'); board.className = 'choices'; board.innerHTML = ''; board.style.gridTemplateColumns = '';
+  const cards = shuffle([poem, ...distractors(poem, pool, 3)]);
+  let done = false; const t0 = performance.now(); const nodes = new Map();
+  for (const c of cards) {
+    const b = el('button', 'choice', c.shimonoku);
+    b.onclick = () => { if (done) return; done = true;
+      nodes.forEach((n, id) => { n.onclick = null; if (id === poem.id) n.classList.add('correct'); });
+      if (c.id !== poem.id) b.classList.add('wrong');
+      advance(poem, c.id === poem.id, performance.now() - t0); };
+    nodes.set(c.id, b); board.append(b);
+  }
+}
+
+/* ---- モード④ 暗唱チェック ---- */
+function qAnsho(poem) {
+  const st = $('#stage'); st.innerHTML = '';
+  st.append(el('div', 'kanji', poem.kaminoku));
+  if (S.showKana) st.append(el('div', 'kana', poem.kaminoku_kana));
+  const ans = el('div', 'kanji', '　　　　　'); ans.style.opacity = '.25'; st.append(ans);
+  const board = $('#board'); board.className = 'selfrow'; board.innerHTML = ''; board.style.gridTemplateColumns = '';
+  const show = el('button', 'ghost big', 'こたえを みる');
+  show.onclick = () => {
+    ans.style.opacity = '1'; ans.textContent = poem.shimonoku;
+    board.innerHTML = '';
+    const yes = el('button', 'yes', 'いえた'), no = el('button', 'no', 'いえなかった');
+    // 自己申告なので速さは記録しない（§6 モード④）
+    yes.onclick = () => advance(poem, true, null);
+    no.onclick  = () => advance(poem, false, null);
+    board.append(yes, no);
+  };
+  board.append(show);
+}
+
+/* ==================== 結果 ==================== */
+function finish() {
+  Audio_.stop(); $('#progFill').style.width = '100%';
+  const ok = log.filter(l => l.ok).length;
+  const times = log.filter(l => l.ok && l.ms != null).map(l => l.ms);
+  const avg = times.length ? times.reduce((a, b) => a + b, 0) / times.length : null;
+  const fast = times.filter(t => t < S.fastMs).length;
+  $('#resultTitle').textContent = ok === log.length ? 'ぜんぶ せいかい！' : 'おつかれさま！';
+  const rs = $('#resultStats'); rs.innerHTML = '';
+  const add = (v, s) => { const d = el('div'); d.append(el('b', '', v), el('span', '', s)); rs.append(d); };
+  add(`${ok}/${log.length}`, 'せいかい');
+  if (avg != null) add((avg / 1000).toFixed(1) + '秒', 'へいきん');
+  if (times.length) add(`${fast}`, `${(S.fastMs/1000)}秒より はやく とれた`);
+  const wl = $('#resultWeak'); wl.innerHTML = '';
+  const miss = log.filter(l => !l.ok).map(l => BY_ID[l.id]);
+  if (miss.length) {
+    wl.append(Object.assign(el('div', 'hint', 'もういちど みておこう'), { style: 'text-align:center;color:var(--sub)' }));
+    for (const p of miss) {
+      const w = el('div', 'w');
+      w.append(el('span', 'k', p.kimariji), el('span', '', `${p.kaminoku} / ${p.shimonoku}`));
+      wl.append(w);
+    }
+  }
+  go('result');
+}
+
+/* ==================== せいせき ==================== */
+function renderStats() {
+  const b = $('#statsBody'); b.innerHTML = '';
+  for (const [k, v] of Object.entries(GOSHOKU.colors)) {
+    const pool = poolFor(k);
+    const box = [0,0,0,0,0,0]; pool.forEach(p => box[P[p.id]?.box ?? 0]++);
+    const row = el('div', 'statrow');
+    row.append(el('h3', '', `${v.label}札　${mastered(pool)} / ${pool.length} おぼえた`));
+    const m = el('div', 'meter');
+    box.forEach((n, i) => { if (!n) return; const s = el('i');
+      s.style.width = (n / pool.length * 100) + '%';
+      s.style.background = i === 0 ? 'var(--line)' : `color-mix(in srgb,${v.hex} ${i*20}%,var(--line))`;
+      m.append(s); });
+    row.append(m);
+    row.append(el('div', 'legend', `まだ ${box[0]}　れんしゅう中 ${box[1]+box[2]+box[3]}　おぼえた ${box[4]+box[5]}`));
+    b.append(row);
+  }
+  const weak = poolFor('weak');
+  const row = el('div', 'statrow'); row.append(el('h3', '', `にがてな ふだ　${weak.length}まい`));
+  const list = el('div', 'weaklist');
+  for (const p of weak.slice(0, 40)) {
+    const w = el('div', 'w');
+    w.append(el('span', 'k', p.kimariji), el('span', '', `${p.kaminoku} / ${p.shimonoku}`));
+    list.append(w);
+  }
+  row.append(list); b.append(row);
+}
+
+/* ==================== せってい ==================== */
+function renderSettings() {
+  const b = $('#settingsBody'); b.innerHTML = '';
+  const card = t => { const r = el('div', 'statrow'); r.append(el('h3', '', t)); b.append(r); return r; };
+  const field = (parent, label, note, control) => {
+    const f = el('div', 'field'); const l = el('label');
+    l.append(document.createTextNode(label)); if (note) l.append(el('span', 'note', note));
+    f.append(l, control); parent.append(f); return f;
+  };
+  const seg = (opts, cur, on) => { const s = el('div', 'seg');
+    opts.forEach(([v, t]) => { const x = el('button', '', t);
+      x.setAttribute('aria-pressed', String(v === cur));
+      x.onclick = () => { on(v); saveSettings(); renderSettings(); }; s.append(x); });
+    return s; };
+
+  const g = card('れんしゅう');
+  field(g, 'ふだの まいすう', '札取り・決まり字クイズで画面に並ぶ枚数',
+        seg([[4,'4'],[8,'8'],[16,'16']], S.cardCount, v => S.cardCount = v));
+  field(g, '1かいの もんだいすう', '五色の一色ぶんは20首',
+        seg([[10,'10'],[20,'20'],[100,'ぜんぶ']], S.sessionLen, v => S.sessionLen = v));
+  field(g, '「はやい」の きじゅん', 'これより遅い正解は、おぼえた扱いにしない（§7.2）',
+        seg([[2000,'2秒'],[3000,'3秒'],[5000,'5秒']], S.fastMs, v => S.fastMs = v));
+
+  const d = card('ひょうじ');
+  field(d, 'ふりがな（かな）を だす', '上の句→下の句・暗唱チェックで、かなを添える',
+        seg([[true,'だす'],[false,'ださない']], S.showKana, v => S.showKana = v));
+  field(d, 'ふだに いろを つける', '五色の色を札のふちに出す。色で覚えたいときに',
+        seg([[true,'つける'],[false,'つけない']], S.colorHint, v => S.colorHint = v));
+  field(d, 'せいかいで 音を とめる',
+        'とめる＝取れたらすぐ次へ（テンポ重視）。とめない＝下の句まで最後まで流す（耳で覚える。本物の音源は1首24秒。タップで次へ進める）',
+        seg([[true,'とめる'],[false,'とめない']], S.stopOnCorrect, v => S.stopOnCorrect = v));
+
+  const a = card('よみあげ音声');
+  const n = Audio_.importedCount();
+  const imp = el('div');
+  const inp = el('input'); inp.type = 'file'; inp.accept = 'audio/*'; inp.multiple = true;
+  inp.style.display = 'none';
+  const btn = el('button', 'ghost', '音源を とりこむ');
+  btn.onclick = () => inp.click();
+  inp.onchange = async () => { await importAudio([...inp.files]); renderSettings(); };
+  imp.append(btn, inp);
+  field(a, `とりこみずみ ${n} 首`,
+        n ? 'この端末の中だけに保存されています。' :
+        'いまは同梱のパブリックドメイン音源（LibriVox）で読んでいます。本物の読み方の音源を入れると、そちらが優先されます。ファイル名の先頭の数字を歌番号として読み取ります（001.mp3 など）。',
+        imp);
+  if (n) { const clr = el('button', 'ghost', 'ぜんぶ消す');
+    clr.onclick = async () => { if (confirm('とりこんだ音源をぜんぶ消しますか？')) { await Audio_.clear(); renderSettings(); } };
+    field(a, '', '', clr); }
+  const chk = el('button', 'ghost', '音源を たしかめる');
+  chk.onclick = () => renderAudioCheck();
+  field(a, '音と ふだが 合っているか', '100首を順に鳴らして、歌と音がずれていないか確かめる', chk);
+
+  const k = card('きろく');
+  const ex = el('button', 'ghost', '書き出す');
+  ex.onclick = () => {
+    const blob = new Blob([JSON.stringify({ profile:S.profile, progress:P, settings:S }, null, 1)],
+                          { type:'application/json' });
+    const a2 = document.createElement('a');
+    a2.href = URL.createObjectURL(blob); a2.download = `fudacchi-${S.profile}.json`; a2.click();
+  };
+  field(k, 'きろくを 書き出す', 'iPadのデータが消えたときのため。ときどき保存しておく（§7.4）', ex);
+  const imp2 = el('input'); imp2.type = 'file'; imp2.accept = 'application/json'; imp2.style.display = 'none';
+  const ib = el('button', 'ghost', '読みこむ'); ib.onclick = () => imp2.click();
+  imp2.onchange = async () => { try {
+      const j = JSON.parse(await imp2.files[0].text());
+      if (j.progress) { P = j.progress; saveProgress(); }
+      if (j.settings) { S = { ...S, ...j.settings }; saveSettings(); }
+      alert('読みこみました'); renderSettings();
+    } catch { alert('読みこめませんでした'); } };
+  const iw = el('div'); iw.append(ib, imp2);
+  field(k, 'きろくを 読みこむ', '書き出したファイルから元に戻す', iw);
+  const rs = el('button', 'ghost', 'ぜんぶ わすれる');
+  rs.onclick = () => { if (confirm('おぼえた記録をぜんぶ消しますか？もどせません')) {
+      P = {}; saveProgress(); renderSettings(); } };
+  field(k, 'きろくを けす', '', rs);
+}
+
+// ファイル名の先頭の数字を歌番号として読む。読めなければ、名前順で1〜100に割り当てる。
+// 配布元によってファイル名がまちまちなので、両方の道を用意しておく。
+function mapFiles(files) {
+  const named = files.map(f => {
+    const m = f.name.match(/(\d{1,3})/);
+    const id = m ? parseInt(m[1], 10) : null;
+    return { f, id: (id >= 1 && id <= 100) ? id : null };
+  });
+  const ok = named.filter(x => x.id);
+  const ids = new Set(ok.map(x => x.id));
+  // 番号が読めて、しかも重複していなければ、それを信じる
+  if (ok.length === files.length && ids.size === files.length) return named;
+  return null;
+}
+
+async function importAudio(files) {
+  if (!files.length) return;
+  let mapped = mapFiles(files);
+  if (!mapped) {
+    const sorted = [...files].sort((a, b) => a.name.localeCompare(b.name, 'ja', { numeric: true }));
+    const ok = confirm(
+      `ファイル名から歌番号を読み取れませんでした（または番号が重なっています）。\n\n` +
+      `名前順にならべて、1番から順に割り当てますか？\n` +
+      `  さいしょ: ${sorted[0].name} → 1番\n` +
+      `  さいご  : ${sorted[sorted.length-1].name} → ${sorted.length}番\n\n` +
+      `※ 序歌が混ざっていると1首ずつずれます。とりこんだあと\n` +
+      `　「音源を たしかめる」で必ず確認してください。`);
+    if (!ok) return;
+    mapped = sorted.map((f, i) => ({ f, id: i + 1 })).filter(x => x.id <= 100);
+  }
+  let n = 0;
+  for (const { f, id } of mapped) { if (!id) continue; await Audio_.put(id, f); n++; }
+  alert(`${n}首 とりこみました。\n「音源を たしかめる」で、歌と音が合っているか確認してください。`);
+}
+
+function renderAudioCheck() {
+  const b = $('#settingsBody'); b.innerHTML = '';
+  const back = el('button', 'ghost', '← せっていに もどる'); back.onclick = renderSettings;
+  b.append(back);
+  const r = el('div', 'statrow');
+  r.append(el('h3', '', '音源のたしかめ'));
+  r.append(el('div', 'legend', '再生して、読まれた歌と行の歌が同じか確かめる。ずれていたら、その番号を控えて知らせてください。'));
+  const list = el('div', 'checklist');
+  for (const p of POEMS) {
+    const c = el('div', 'c');
+    const play = el('button', '', '▶');
+    play.onclick = () => { Audio_.unlock(); Audio_.play(p); };
+    c.append(el('span', 'n', String(p.id)), play,
+             el('span', '', `${p.kaminoku} / ${p.shimonoku}`),
+             Object.assign(el('span', 'n', Audio_.source(p.id) === 'file' ? '取込' : 'PD'),
+                           { style: 'margin-left:auto' }));
+    list.append(c);
+  }
+  r.append(list); b.append(r);
+}
+
+/* ==================== 起動 ==================== */
+(async () => {
+  const [pj, gj] = await Promise.all([
+    fetch('data/poems.json').then(r => r.json()),
+    fetch('data/goshoku.json').then(r => r.json()),
+  ]);
+  POEMS = pj; GOSHOKU = gj; POEMS.forEach(p => BY_ID[p.id] = p);
+  await Audio_.init();
+  go('home');
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+})();
