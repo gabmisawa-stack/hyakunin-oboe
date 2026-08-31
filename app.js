@@ -3,6 +3,8 @@
 
 import { emptyRecord, gradeRecord, orderPool, isWeak, pickDistractors } from './srs.js';
 
+const BUILD = '1.0.4 / 2026-08-31';   // 設定画面に出す。iPadが古い版を掴んでいないかの確認用
+
 const $ = s => document.querySelector(s);
 const el = (t, c, x) => { const n = document.createElement(t); if (c) n.className = c;
                           if (x != null) n.textContent = x; return n; };
@@ -470,12 +472,12 @@ function renderSettings() {
   //    代わりに、取り込むときに拡張子で選り分ける。
   const inp = el('input'); inp.type = 'file'; inp.multiple = true;
   inp.style.display = 'none';
-  const btn = el('button', 'ghost', '音源を とりこむ');
+  const btn = el('button', 'ghost', '★ 音源（mp3・m4a）を とりこむ');
   btn.onclick = () => inp.click();
   inp.onchange = async () => {
     const files = [...inp.files]; inp.value = '';
     await importAudio(files, msg => { btn.textContent = msg; });
-    btn.textContent = '音源を とりこむ';
+    btn.textContent = '★ 音源（mp3・m4a）を とりこむ';
     renderSettings();
   };
   imp.append(btn, inp);
@@ -499,8 +501,8 @@ function renderSettings() {
     a2.href = URL.createObjectURL(blob); a2.download = `fudacchi-${S.profile}.json`; a2.click();
   };
   field(k, 'きろくを 書き出す', 'iPadのデータが消えたときのため。ときどき保存しておく（§7.4）', ex);
-  const imp2 = el('input'); imp2.type = 'file'; imp2.accept = 'application/json'; imp2.style.display = 'none';
-  const ib = el('button', 'ghost', '読みこむ'); ib.onclick = () => imp2.click();
+  const imp2 = el('input'); imp2.type = 'file'; imp2.style.display = 'none';   // accept は付けない（§iOSの癖）
+  const ib = el('button', 'ghost', '記録ファイルを 読みこむ'); ib.onclick = () => imp2.click();
   imp2.onchange = async () => { try {
       const j = JSON.parse(await imp2.files[0].text());
       if (j.progress) { P = j.progress; saveProgress(); }
@@ -509,6 +511,24 @@ function renderSettings() {
     } catch { alert('読みこめませんでした'); } };
   const iw = el('div'); iw.append(ib, imp2);
   field(k, 'きろくを 読みこむ', '書き出したファイルから元に戻す', iw);
+  const app = card('アプリ');
+  field(app, `いまの版　${BUILD}`,
+        'うまく動かないときは、まずここを見る。私に伝えるときもこの番号を', el('span'));
+  const upd = el('button', 'ghost', 'さいしんに する');
+  upd.onclick = async () => {
+    try {
+      const rg = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(rg.map(r => r.unregister()));
+      const ks = await caches.keys();
+      await Promise.all(ks.map(k => caches.delete(k)));
+    } catch {}
+    alert('ふるいものを消しました。このあと画面が読みこみ直されます。');
+    location.reload();
+  };
+  field(app, 'アプリを さいしんに する',
+        'iPadは古い版を抱えこむことがある。押すと、ためこんだものを消して読みこみ直す。とりこんだ音源と記録は消えない',
+        upd);
+
   const rs = el('button', 'ghost', 'ぜんぶ わすれる');
   rs.onclick = () => { if (confirm('おぼえた記録をぜんぶ消しますか？もどせません')) {
       P = {}; saveProgress(); renderSettings(); } };
