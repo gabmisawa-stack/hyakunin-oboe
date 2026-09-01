@@ -169,6 +169,14 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:0;background:none
 .selfrow button{border-radius:1rem;padding:1rem 2.2rem;font-size:1.2rem;border:2px solid var(--line);
                 background:var(--panel)}
 .selfrow .yes{border-color:var(--ok)} .selfrow .no{border-color:var(--ng)}
+/* 試合 */
+.bigcount{font-size:1.6rem;color:var(--accent-hi);letter-spacing:.1em;font-variant-numeric:tabular-nums}
+.shiaiinfo{display:flex;gap:2rem;align-items:baseline;justify-content:center;
+           font-variant-numeric:tabular-nums;letter-spacing:.06em}
+.shiaiinfo .tm{font-size:2rem;color:var(--accent-hi)}
+.shiaiinfo .te{color:var(--ng)}
+.fuda.taken{transform:scale(.6);opacity:0;transition:transform .2s,opacity .2s}
+
 .feedback{min-height:2rem;text-align:center;font-size:1.15rem;color:var(--sub)}
 .feedback.ok{color:var(--ok)} .feedback.ng{color:var(--ng)}
 

@@ -3,7 +3,7 @@
 
 import { emptyRecord, gradeRecord, orderPool, isWeak, pickDistractors } from './srs.js';
 
-const BUILD = '1.4.0 / 2026-09-01';   // 設定画面に出す。iPadが古い版を掴んでいないかの確認用
+const BUILD = '1.5.0 / 2026-09-01';   // 設定画面に出す。iPadが古い版を掴んでいないかの確認用
 
 const $ = s => document.querySelector(s);
 const el = (t, c, x) => { const n = document.createElement(t); if (c) n.className = c;
@@ -21,13 +21,16 @@ const MODES = [
   { id:'kimari',nm:'決まり字クイズ',ds:'一文字ずつ出てくる。何文字目で分かるかを記録する' },
   { id:'match', nm:'上の句→下の句', ds:'上の句を見て下の句を選ぶ。音を出さずにできる' },
   { id:'ansho', nm:'暗唱チェック',  ds:'下の句を思い出してから答え合わせ。自己申告' },
+  { id:'shiai',  nm:'★ 試合',
+    ds:'20枚をならべて、暗記時間のあと連続で読む。取ると札が消える。タイムとお手つきを記録' },
 ];
 
 /* ==================== 保存 ==================== */
 // 「はやい」の基準。本物の朗詠は節回しがあり、3秒では決まり字まで読まれない（晴の指摘）。
 const FAST_CHOICES = [4000, 5000, 7000];
 const DEF_SETTINGS = { cardCount:8, sessionLen:20, showKana:true, colorHint:true,
-                       stopOnCorrect:true, fastMs:5000, previewFlip:true, profile:'なつ' };
+                       stopOnCorrect:true, fastMs:5000, previewFlip:true,
+                       swapParts:false, memoSec:60, karafuda:false, profile:'なつ' };
 let S = { ...DEF_SETTINGS, ...JSON.parse(localStorage.getItem('fudacchi.settings') || '{}') };
 if (!FAST_CHOICES.includes(S.fastMs)) S.fastMs = 5000;   // 旧設定(3秒)からの引っ越し
 const saveSettings = () => localStorage.setItem('fudacchi.settings', JSON.stringify(S));
@@ -48,6 +51,11 @@ const progKey = () => `fudacchi.progress.${S.profile}`;
 let P = JSON.parse(localStorage.getItem(progKey()) || '{}');
 const saveProgress = () => localStorage.setItem(progKey(), JSON.stringify(P));
 const rec = id => P[id] || (P[id] = emptyRecord());
+
+const bestKey = () => `fudacchi.best.${S.profile}`;
+const bests = () => JSON.parse(localStorage.getItem(bestKey()) || '{}');
+const saveBest = b => localStorage.setItem(bestKey(), JSON.stringify(b));
+const setKey = () => [...picked].sort().join('+');
 
 /* ==================== 出題 ==================== */
 const grade = (id, ok, ms) => {
@@ -78,7 +86,18 @@ const Audio_ = (() => {
       const keys = await tx('readonly', s => s.getAllKeys());
       (keys || []).forEach(k => has.add(k));
     },
-    importedCount: () => has.size,
+    // 鍵は 数値=1首まるごと、'k12'=12番の上の句、's12'=12番の下の句
+    importedCount: () => [...has].filter(k => typeof k === 'number').length,
+    splitCount: () => [...has].filter(k => typeof k === 'string' && k[0] === 'k').length,
+    hasSplit(id) {
+      const k = S.swapParts ? 's' : 'k', s = S.swapParts ? 'k' : 's';
+      return has.has(k + id) && has.has(s + id);
+    },
+    keyFor(id, part) {                      // 入れ替え設定を吸収する
+      if (part === 'kami') return (S.swapParts ? 's' : 'k') + id;
+      if (part === 'shimo') return (S.swapParts ? 'k' : 's') + id;
+      return id;
+    },
     async put(id, blob) { await tx('readwrite', s => s.put(blob, id)); has.add(id); },
     async clear() { await tx('readwrite', s => s.clear()); has.clear(); },
     unlock() {
@@ -86,7 +105,7 @@ const Audio_ = (() => {
       try { const u = new SpeechSynthesisUtterance(''); u.volume = 0; speechSynthesis.speak(u); } catch {}
       const a = new Audio(); a.muted = true; a.play().catch(() => {});
     },
-    source(id) { return has.has(id) ? 'file' : 'librivox'; },
+    source(id) { return this.hasSplit(id) ? 'split' : has.has(id) ? 'file' : 'librivox'; },
     playing() { return !!(cur && !cur.paused && !cur.ended); },
     /** いま鳴っている音が終わるまで待つ。鳴っていなければすぐ返る。 */
     whenDone() {
@@ -99,8 +118,9 @@ const Audio_ = (() => {
       });
     },
     stop() { if (cur) { cur.pause(); cur = null; } try { speechSynthesis.cancel(); } catch {} },
-    // 取り込んだ音源 → LibriVox(PD) → iPadの合成音声 の順に落ちる
-    async play(poem, onEnd) {
+    // 取り込んだ音源 → LibriVox(PD) → iPadの合成音声 の順に落ちる。
+    // part='kami' で上の句だけ、'shimo' で下の句だけ（分割音源があるときだけ効く）
+    async play(poem, onEnd, part) {
       this.stop();
       const tryEl = async src => new Promise(res => {
         const a = new Audio(src); cur = a;
@@ -109,9 +129,17 @@ const Audio_ = (() => {
         a.play().then(() => {}).catch(() => res(false));
         setTimeout(() => { if (a.currentTime > 0 || !a.paused) res(true); }, 400);
       });
+      if (part && this.hasSplit(poem.id)) {
+        const blob = await tx('readonly', s => s.get(this.keyFor(poem.id, part)));
+        if (blob && await tryEl(URL.createObjectURL(blob))) return 'split';
+      }
       if (has.has(poem.id)) {
         const blob = await tx('readonly', s => s.get(poem.id));
         if (blob && await tryEl(URL.createObjectURL(blob))) return 'file';
+      }
+      if (this.hasSplit(poem.id)) {   // 分割しか無いときは上の句を鳴らす
+        const blob = await tx('readonly', s => s.get(this.keyFor(poem.id, 'kami')));
+        if (blob && await tryEl(URL.createObjectURL(blob))) return 'split';
       }
       if (await tryEl(`audio/lv/${String(poem.id).padStart(3, '0')}.m4a`)) return 'librivox';
       try {
@@ -247,6 +275,7 @@ let Q = [], qi = 0, log = [], batch = [];
 const OBOE_BATCH = 5;   // 一度に紹介する首数。多いと覚える前に忘れる
 
 function startSession() {
+  if (pickMode === 'shiai') return startShiai();
   const pool = poolFor();
   if (pickMode === 'oboe') {
     // まだ身についていないものから5首。「見せる→2択→4択」の順に並べる
@@ -263,7 +292,8 @@ function startSession() {
   qi = 0; log = [];
   go('session'); nextQuestion();
 }
-$('#quitBtn').onclick = () => { Audio_.stop(); go('home'); };
+$('#quitBtn').onclick = () => { Audio_.stop();
+  if (shiai) { shiai.done = true; clearInterval(shiai.timer); } go('home'); };
 
 function nextQuestion() {
   Audio_.stop();
@@ -628,6 +658,160 @@ function qAnsho(poem) {
   board.append(show);
 }
 
+/* ==================== 試合 ==================== */
+// 五色百人一首の一試合をひとりでやる形にしたもの。
+//  ① 暗記時間（札を並べて、めくって覚える）… 競技かるたの15分暗記にあたる
+//  ② 連続で読む。取ると札が消える。お手つきは +5秒（時雨の百人一首と同じ流儀）
+//  ③ 全部取り終わるまでのタイムを出し、自己ベストと比べる
+let shiai = null;
+
+function startShiai() {
+  const pool = poolFor();
+  const cards = shuffle(pool.slice()).slice(0, Math.min(20, pool.length));
+  // 空札：盤に無い歌をわざと読む。取ってはいけない札を我慢する練習
+  const extra = S.karafuda
+    ? shuffle(POEMS.filter(p => !cards.includes(p))).slice(0, Math.ceil(cards.length * 0.25))
+    : [];
+  shiai = { cards, order: shuffle([...cards, ...extra]), i: 0, nextAt: Infinity,
+            left: cards.length, tesuki: 0, t0: 0, nodes: null, done: false };
+  go('session'); shiaiMemo();
+}
+
+function shiaiBoard(onPick) {
+  const board = $('#board'); board.className = 'board'; board.innerHTML = '';
+  const nodes = new Map();
+  for (const c of shuffle(shiai.cards.slice())) {
+    const f = el('button', 'fuda');
+    f._poem = c;
+    f.append(fudaText(c.shimonoku_lines));
+    if (S.colorHint && GOSHOKU.colors[c.color]) {
+      f.style.borderColor = GOSHOKU.colors[c.color].hex; f.dataset.tinted = '1';
+    }
+    f.onclick = () => onPick(c, f);
+    nodes.set(c.id, f); board.append(f);
+  }
+  fitFuda();
+  return nodes;
+}
+
+/* ---- ① 暗記時間 ---- */
+function shiaiMemo() {
+  const st = $('#stage'); st.innerHTML = '';
+  if (!S.memoSec) { $('#counter').textContent = `${shiai.cards.length}枚`;
+                    shiai.nodes = shiaiBoard(() => {}); return shiaiRun(); }
+  $('#counter').textContent = `${shiai.cards.length}枚`;
+  $('#progFill').style.width = '0%';
+  shiai.nodes = shiaiBoard((c, f) => flipFuda(f));
+  const note = el('div', 'hint', 'あんきタイム　ふだをタップすると うらの上の句が見える');
+  const t = el('div', 'bigcount', '');
+  const go2 = el('button', 'start', 'はじめる');
+  go2.style.margin = '.3rem 0 0'; go2.onclick = () => { clearInterval(tm); shiaiRun(); };
+  st.append(note, t, go2);
+  let left = S.memoSec;
+  const tick = () => { t.textContent = left > 0 ? `のこり ${left}びょう` : ''; };
+  tick();
+  const tm = setInterval(() => {
+    left--; tick();
+    if (left <= 0) { clearInterval(tm); shiaiRun(); }
+  }, 1000);
+}
+
+/* ---- ② 試合 ---- */
+function shiaiRun() {
+  unflipAll();
+  shiai.t0 = performance.now();
+  const st = $('#stage');
+  st.innerHTML = '';
+  const info = el('div', 'shiaiinfo');
+  const timeEl = el('span', 'tm', '0.0');
+  const leftEl = el('span', '', '');
+  const teEl = el('span', 'te', '');
+  info.append(timeEl, leftEl, teEl); st.append(info);
+  const tickTime = () => {
+    if (shiai.done) return clearInterval(shiai.timer);
+    timeEl.textContent = ((performance.now() - shiai.t0) / 1000).toFixed(1) + '秒';
+    leftEl.textContent = `のこり ${shiai.left}まい`;
+    teEl.textContent = shiai.tesuki ? `お手つき ${shiai.tesuki}（+${shiai.tesuki * 5}秒）` : '';
+    if (performance.now() >= shiai.nextAt) readNext();     // 進行はここだけ
+  };
+  clearInterval(shiai.timer);
+  shiai.timer = setInterval(tickTime, 100);   // 画面が裏でも止まらないよう setInterval で
+  tickTime();
+
+  shiai.nodes.forEach((f, id) => {
+    f.onclick = () => onTake(id, f);
+  });
+  readNext();
+}
+
+// 次に読む時刻を1つだけ持ち、100msの時計から見にいく。
+// ★ setTimeout を積むやり方だと、音の終わり・時間切れ・札を取った の3つが
+//   競合して試合が止まった。進行の主導権は時計ひとつに集める。
+const schedNext = ms => { shiai.nextAt = performance.now() + ms; };
+
+function readNext() {
+  if (shiai.done) return;
+  shiai.nextAt = Infinity;                 // 読んでいる間は自動で進まない
+  if (shiai.i >= shiai.order.length) {
+    if (shiai.left > 0) { shiai.order = shuffle(shiai.cards.filter(c => shiai.nodes.get(c.id))); shiai.i = 0; }
+    else return finishShiai();
+  }
+  const poem = shiai.order[shiai.i++];
+  // すでに取られた札は読み飛ばす
+  if (!shiai.nodes.has(poem.id) && shiai.cards.includes(poem)) return readNext();
+  shiai.now = poem;
+  shiai.readAt = performance.now();
+  shiai.isKara = !shiai.cards.includes(poem);
+  Audio_.play(poem, () => schedNext(900), 'kami');
+  schedNext(15000);            // 音が鳴らなくても15秒で次へ。試合を止めない
+}
+// 音の終わりが来たら短く、来なければ15秒で。どちらでも時計が拾う
+
+function onTake(id, f) {
+  if (shiai.done) return;
+  const right = shiai.now && id === shiai.now.id && !shiai.isKara;
+  if (right) {
+    grade(id, true, performance.now() - shiai.readAt);
+    f.classList.add('taken');
+    setTimeout(() => { f.remove(); fitFuda(); }, 220);
+    shiai.nodes.delete(id);
+    shiai.left--;
+    Audio_.stop();
+    if (shiai.left <= 0) return finishShiai();
+    schedNext(350);
+  } else {
+    shiai.tesuki++;                       // お手つき。+5秒（札は減らない）
+    grade(id, false, null);
+    f.classList.add('wrong');
+    setTimeout(() => f.classList.remove('wrong'), 400);
+  }
+}
+
+function finishShiai() {
+  shiai.done = true; clearInterval(shiai.timer); Audio_.stop();
+  const ms = performance.now() - shiai.t0 + shiai.tesuki * 5000;
+  const b = bests(), k = setKey() + ':' + shiai.cards.length;
+  const prev = b[k];
+  const isBest = !prev || ms < prev.ms;
+  if (isBest) { b[k] = { ms, tesuki: shiai.tesuki, at: Date.now() }; saveBest(b); }
+
+  $('#resultTitle').textContent = isBest ? '自己ベスト！' : 'おつかれさま！';
+  const rs = $('#resultStats'); rs.innerHTML = '';
+  const add = (v, s) => { const d = el('div'); d.append(el('b', '', v), el('span', '', s)); rs.append(d); };
+  add(fmt(ms), 'タイム');
+  add(String(shiai.tesuki), `お手つき（+${shiai.tesuki * 5}秒）`);
+  add(String(shiai.cards.length), 'まい');
+  if (prev) add(fmt(prev.ms), isBest ? 'これまでのベスト' : 'ベスト');
+  const wl = $('#resultWeak'); wl.innerHTML = '';
+  if (prev && !isBest) wl.append(Object.assign(el('div','hint',
+    `ベストまで あと ${((ms - prev.ms)/1000).toFixed(1)}秒`), {style:'text-align:center'}));
+  go('result');
+}
+const fmt = ms => {
+  const s = ms / 1000;
+  return s >= 60 ? `${Math.floor(s/60)}分${(s%60).toFixed(1)}秒` : `${s.toFixed(1)}秒`;
+};
+
 /* ==================== 結果 ==================== */
 function finish() {
   Audio_.stop(); $('#progFill').style.width = '100%';
@@ -704,6 +888,11 @@ function renderSettings() {
         seg([[4,'4'],[8,'8'],[16,'16']], S.cardCount, v => S.cardCount = v));
   field(g, '1かいの もんだいすう', '五色の一色ぶんは20首',
         seg([[10,'10'],[20,'20'],[100,'ぜんぶ']], S.sessionLen, v => S.sessionLen = v));
+  field(g, '試合の あんきタイム', '札をならべて覚える時間。競技かるたは15分とる',
+        seg([[0,'なし'],[30,'30秒'],[60,'1分'],[120,'2分']], S.memoSec, v => S.memoSec = v));
+  field(g, '試合に 空札を まぜる',
+        'ならべていない歌もわざと読む。取ってはいけない札を我慢する練習になる',
+        seg([[false,'まぜない'],[true,'まぜる']], S.karafuda, v => S.karafuda = v));
   field(g, '「はやい」の きじゅん',
         'これより遅い正解は、おぼえた扱いにしない。本物の朗詠は節回しがあるので、'
         + '3秒では決まり字まで読まれない。ふつうは5秒',
@@ -739,6 +928,12 @@ function renderSettings() {
     renderSettings();
   };
   imp.append(btn, inp);
+  const sp = Audio_.splitCount();
+  if (sp) {
+    field(a, `上下に わかれた音源 ${sp} 首`,
+          '上の句だけを鳴らせる。試合モードはこれがあると本番と同じ速さになる',
+          seg([[false,'そのまま'],[true,'上下を いれかえる']], S.swapParts, v => S.swapParts = v));
+  }
   field(a, `とりこみずみ ${n} 首`,
         n ? 'この端末の中だけに保存されています。' :
         'いまは同梱のパブリックドメイン音源（LibriVox）で読んでいます。本物の読み方の音源を入れると、そちらが優先されます。ファイル名の先頭の数字を歌番号として読み取ります（001.mp3 など）。',
@@ -811,11 +1006,15 @@ function renderSettings() {
 
 // ファイル名の先頭の数字を歌番号として読む。読めなければ、名前順で1〜100に割り当てる。
 // 配布元によってファイル名がまちまちなので、両方の道を用意しておく。
+// ファイル名に kami/shimo（または 上/下）が入っていれば分割音源として扱う
+const partOf = name => /kami|_上|上句/.test(name) ? 'k'
+                     : /shimo|_下|下句/.test(name) ? 's' : '';
 function mapFiles(files) {
   const named = files.map(f => {
     const m = f.name.match(/(\d{1,3})/);
-    const id = m ? parseInt(m[1], 10) : null;
-    return { f, id: (id >= 1 && id <= 100) ? id : null };
+    const n = m ? parseInt(m[1], 10) : null;
+    const p = partOf(f.name);
+    return { f, id: (n >= 1 && n <= 100) ? (p ? p + n : n) : null };
   });
   const ok = named.filter(x => x.id);
   const ids = new Set(ok.map(x => x.id));
