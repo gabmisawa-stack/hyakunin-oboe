@@ -12,3 +12,6 @@ audio/import/
 
 # ローカルのプレビュー設定（絶対パスを含むので公開しない）
 .claude/
+
+# Cloudflare へ送る一時ディレクトリ
+dist/
