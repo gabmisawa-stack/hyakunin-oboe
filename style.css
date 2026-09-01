@@ -70,6 +70,8 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:0;background:none
 
 /* ---- ホーム ---- */
 .pick h2{margin:0 0 .5rem;font-size:1.05rem;color:var(--sub);font-weight:400;letter-spacing:.08em}
+.picknote{color:var(--accent-hi);font-size:1.15rem;letter-spacing:.06em}
+.picknote.none{color:var(--sub);font-size:.9rem}
 .colorpicks{display:flex;gap:.7rem;flex-wrap:wrap}
 /* 色えらびは、本物の札をそのまま立てたように見せる */
 .colorpicks{gap:.85rem}

@@ -3,7 +3,7 @@
 
 import { emptyRecord, gradeRecord, orderPool, isWeak, pickDistractors } from './srs.js';
 
-const BUILD = '1.3.1 / 2026-09-01';   // 設定画面に出す。iPadが古い版を掴んでいないかの確認用
+const BUILD = '1.4.0 / 2026-09-01';   // 設定画面に出す。iPadが古い版を掴んでいないかの確認用
 
 const $ = s => document.querySelector(s);
 const el = (t, c, x) => { const n = document.createElement(t); if (c) n.className = c;
@@ -157,14 +157,27 @@ document.addEventListener('click', e => {
 });
 
 /* ==================== ホーム ==================== */
-let pickColor = null, pickMode = 'tori';
+// 色は複数えらべる。五色百人一首は「青を覚えたら緑を足す」と増やしていく教え方なので、
+// 20首 → 40首 → 60首 …と範囲を広げられるようにする。
+let picked = new Set(), pickMode = 'tori';
 
-function poolFor(key) {
-  if (key === 'all') return POEMS.slice();
-  if (key === 'weak') return POEMS.filter(p => isWeak(p, P));
-  return POEMS.filter(p => p.color === key);
+function poolFor(sel = picked) {
+  if (sel.has('all')) return POEMS.slice();
+  if (sel.has('weak')) return POEMS.filter(p => isWeak(p, P));
+  if (!sel.size) return [];
+  return POEMS.filter(p => sel.has(p.color));
 }
 const mastered = pool => pool.filter(p => (P[p.id]?.box ?? 0) >= 4).length;
+
+function togglePick(k) {
+  if (k === 'all' || k === 'weak') {            // この2つは単独
+    picked.has(k) ? picked.clear() : (picked = new Set([k]));
+  } else {
+    picked.delete('all'); picked.delete('weak');
+    picked.has(k) ? picked.delete(k) : picked.add(k);
+  }
+  renderHome();
+}
 
 function renderHome() {
   const cw = $('#colorPicks'); cw.innerHTML = '';
@@ -172,16 +185,23 @@ function renderHome() {
                  { k:'all', nm:'ぜんぶ', hex:'var(--accent)' },
                  { k:'weak', nm:'にがてだけ', hex:'var(--ng)' }];
   for (const it of items) {
-    const pool = poolFor(it.k), m = mastered(pool);
+    const pool = poolFor(new Set([it.k])), m = mastered(pool);
     const b = el('button', 'cbtn'); b.style.setProperty('--dot', it.hex);
-    b.setAttribute('aria-pressed', String(pickColor === it.k));
+    b.setAttribute('aria-pressed', String(picked.has(it.k)));
     b.append(el('span', 'nm', it.nm), el('span', 'mt', `${m} / ${pool.length}`));
     const bar = el('div', 'bar'), i = el('i'); i.style.width = pool.length ? (m / pool.length * 100) + '%' : '0';
     bar.append(i); b.append(bar);
-    b.onclick = () => { pickColor = it.k; renderHome(); };
+    b.onclick = () => togglePick(it.k);
     if (!pool.length) b.disabled = true;
     cw.append(b);
   }
+  // いま何首えらんでいるか
+  const total = poolFor().length;
+  const note = $('#pickNote');
+  note.textContent = total
+    ? `${total}首　（${mastered(poolFor())}首 おぼえた）`
+    : 'いろを タップしてね。ふたつ以上 えらべるよ';
+  note.classList.toggle('none', !total);
   const mw = $('#modePicks'); mw.innerHTML = '';
   for (const m of MODES) {
     const b = el('button', 'mbtn'); b.setAttribute('aria-pressed', String(pickMode === m.id));
@@ -189,7 +209,7 @@ function renderHome() {
     b.onclick = () => { pickMode = m.id; renderHome(); };
     mw.append(b);
   }
-  $('#startBtn').disabled = !pickColor;
+  $('#startBtn').disabled = !poolFor().length;
   const ub = $('#userBtn');
   ub.textContent = S.profile + ' ▾';
   ub.onclick = openProfilePicker;
@@ -227,7 +247,7 @@ let Q = [], qi = 0, log = [], batch = [];
 const OBOE_BATCH = 5;   // 一度に紹介する首数。多いと覚える前に忘れる
 
 function startSession() {
-  const pool = poolFor(pickColor);
+  const pool = poolFor();
   if (pickMode === 'oboe') {
     // まだ身についていないものから5首。「見せる→2択→4択」の順に並べる
     batch = selectPoems(pool, Math.min(OBOE_BATCH, pool.length));
@@ -251,7 +271,7 @@ function nextQuestion() {
   $('#progFill').style.width = (qi / Q.length * 100) + '%';
   $('#counter').textContent = `${qi + 1} / ${Q.length}`;
   $('#feedback').className = 'feedback'; $('#feedback').textContent = '';
-  const { poem, kind } = Q[qi], pool = poolFor(pickColor);
+  const { poem, kind } = Q[qi], pool = poolFor();
   if (pickMode === 'oboe') return (kind === 'show' ? qShow : qOboeTest)(poem, kind);
   ({ tori: qTori, kimari: qKimari, match: qMatch, ansho: qAnsho })[pickMode](poem, pool);
 }
@@ -640,7 +660,7 @@ function finish() {
 function renderStats() {
   const b = $('#statsBody'); b.innerHTML = '';
   for (const [k, v] of Object.entries(GOSHOKU.colors)) {
-    const pool = poolFor(k);
+    const pool = poolFor(new Set([k]));
     const box = [0,0,0,0,0,0]; pool.forEach(p => box[P[p.id]?.box ?? 0]++);
     const row = el('div', 'statrow');
     row.append(el('h3', '', `${v.label}札　${mastered(pool)} / ${pool.length} おぼえた`));
@@ -653,7 +673,7 @@ function renderStats() {
     row.append(el('div', 'legend', `まだ ${box[0]}　れんしゅう中 ${box[1]+box[2]+box[3]}　おぼえた ${box[4]+box[5]}`));
     b.append(row);
   }
-  const weak = poolFor('weak');
+  const weak = poolFor(new Set(['weak']));
   const row = el('div', 'statrow'); row.append(el('h3', '', `にがてな ふだ　${weak.length}まい`));
   const list = el('div', 'weaklist');
   for (const p of weak.slice(0, 40)) {
