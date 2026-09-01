@@ -3,7 +3,7 @@
 
 import { emptyRecord, gradeRecord, orderPool, isWeak, pickDistractors } from './srs.js';
 
-const BUILD = '1.8.0 / 2026-09-01';   // 設定画面に出す。iPadが古い版を掴んでいないかの確認用
+const BUILD = '1.8.1 / 2026-09-01';   // 設定画面に出す。iPadが古い版を掴んでいないかの確認用
 
 const $ = s => document.querySelector(s);
 const el = (t, c, x) => { const n = document.createElement(t); if (c) n.className = c;
@@ -181,27 +181,24 @@ function pickDialog(title, items) {
 // 「音を聞けばどのモードか分かる」ようにするため。
 // 同じ系統の2テイク（-a/-b）は同じ楽器・同じテンポなので、
 // どちらが鳴っても耳で見分けはつく。まったく同じ音の繰り返しにはしない。
-// ⚠️ いまは4系統しかないので、結果・せいせき・せっていは他と共用になっている。
-//    3系統（結果発表100bpm／篠笛65bpm／水琴窟45bpm）を足せば全部が別の曲になる。
-//    足すときは data/bgm.json にファイル名を入れて、ここの行を書き換えるだけ。
+// 画面ごとに1曲ずつ、きっちり割り当てる。音を聞けばどの画面かが分かる。
+// 4系統×2テイク（1本は短くて除外）で7曲、画面も7つなので1対1で足りる。
+// a/b は同じ楽器・同じテンポだが別の演奏なので、並べる画面は離しておく。
 const BGM_FOR = {
-  home:     'koto-morning',    // 箏ソロ60。迎える画面
-  kimari:   'paper-lantern',   // 箏・三味線85。少し動きがある
-  match:    'breath-of-pine',  // 尺八70。じっくり選ぶ
-  ansho:    'court-silence',   // 笙・篳篥50。静かに思い出す
-  result:   'paper-lantern',   // ★暫定。本来は「結果発表」用の曲がほしい
-  stats:    'breath-of-pine',  // ★暫定。本来は篠笛のソロ
-  settings: 'court-silence',   // ★暫定。本来は水琴窟のミニマル
+  home:     'koto-morning-a.m4a',    // 箏ソロ60。迎える
+  kimari:   'paper-lantern-a.m4a',   // 箏・三味線85。動きがある＝速さを競う場面
+  match:    'breath-of-pine-a.m4a',  // 尺八70。じっくり選ぶ
+  ansho:    'court-silence-a.m4a',   // 笙・篳篥50。静かに思い出す
+  result:   'paper-lantern-b.m4a',   // 85で明るい。やり切ったあと
+  stats:    'breath-of-pine-b.m4a',  // しっとり。記録を振り返る
+  settings: 'koto-morning-b.m4a',    // 箏ソロ。淡々と
 };
 const Bgm = (() => {
   let el = null, list = [], last = -1, want = false, family = 'home';
   const pick = () => {
-    const fam = BGM_FOR[family] || BGM_FOR.home;
-    const idx = list.map((n, i) => [n, i]).filter(([n]) => n.startsWith(fam)).map(([, i]) => i);
-    const from = idx.length ? idx : list.map((_, i) => i);
-    if (from.length < 2) return last = from[0] ?? 0;
-    let i; do { i = from[Math.floor(Math.random() * from.length)]; } while (i === last);
-    return last = i;
+    const want = BGM_FOR[family] || BGM_FOR.home;
+    const i = list.indexOf(want);
+    return last = (i >= 0 ? i : 0);
   };
   const fade = (to, ms = 800) => {
     if (!el) return;
@@ -230,14 +227,16 @@ const Bgm = (() => {
       if (el && !el.paused) { fade(vol); return; }
       if (!el) {
         el = new Audio();
-        el.addEventListener('ended', () => { if (want && S.bgm) this.next(); });
+        el.loop = true;      // 画面ごとに固定なので、同じ曲をそのまま繰り返す
       }
       el.src = 'audio/bgm/' + list[pick()];
       el.volume = 0;
       el.play().then(() => fade(vol)).catch(() => {});
     },
     next() { if (!list.length || !el || S.muted) return;
-      el.src = 'audio/bgm/' + list[pick()]; el.volume = 0;
+      const src = 'audio/bgm/' + list[pick()];
+      if (el.src.endsWith(src)) { if (el.paused) el.play().catch(() => {}); return; }
+      el.src = src; el.volume = 0;
       el.play().then(() => fade(Math.max(0, Math.min(1, (S.bgmVol ?? 35) / 100)))).catch(() => {}); },
     stop() { want = false; fade(0, 500); },
     setVol() { if (el && !el.paused) el.volume = Math.max(0, Math.min(1, (S.bgmVol ?? 35) / 100)); },
