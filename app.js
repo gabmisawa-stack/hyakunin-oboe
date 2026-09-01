@@ -3,7 +3,7 @@
 
 import { emptyRecord, gradeRecord, orderPool, isWeak, pickDistractors } from './srs.js';
 
-const BUILD = '1.9.2 / 2026-09-01';   // 設定画面に出す。iPadが古い版を掴んでいないかの確認用
+const BUILD = '1.9.3 / 2026-09-01';   // 設定画面に出す。iPadが古い版を掴んでいないかの確認用
 
 const $ = s => document.querySelector(s);
 const el = (t, c, x) => { const n = document.createElement(t); if (c) n.className = c;
@@ -1160,7 +1160,7 @@ function renderSettings() {
           seg([[false,'そのまま'],[true,'上下を いれかえる']], S.swapParts, v => S.swapParts = v));
   }
   field(a, `とりこみずみ ${n} 首`,
-        n ? 'この端末の中だけに保存されています。' :
+        n ? 'このたんまつの中だけに保存されています。' :
         'いまは同梱のパブリックドメイン音源（LibriVox）で読んでいます。本物の読み方の音源を入れると、そちらが優先されます。ファイル名の先頭の数字を歌番号として読み取ります（001.mp3 など）。',
         imp);
   if (n) { const clr = el('button', 'ghost', 'ぜんぶ消す');
@@ -1178,7 +1178,7 @@ function renderSettings() {
     const a2 = document.createElement('a');
     a2.href = URL.createObjectURL(blob); a2.download = `fudacchi-${S.profile}.json`; a2.click();
   };
-  field(k, 'きろくを 書き出す', 'iPadのデータが消えたときのため。ときどき保存しておく（§7.4）', ex);
+  field(k, 'きろくを 書き出す', 'たんまつのデータが消えたときのため。ときどき保存しておく（§7.4）', ex);
   const imp2 = el('input'); imp2.type = 'file'; imp2.style.display = 'none';   // accept は付けない（§iOSの癖）
   const ib = el('button', 'ghost', '記録ファイルを 読みこむ'); ib.onclick = () => imp2.click();
   imp2.onchange = async () => { try {
@@ -1220,7 +1220,7 @@ function renderSettings() {
     location.reload();
   };
   field(app, 'アプリを さいしんに する',
-        'iPadは古い版を抱えこむことがある。押すと、ためこんだものを消して読みこみ直す。とりこんだ音源と記録は消えない',
+        'たんまつが古い版を抱えこむことがある。押すと、ためこんだものを消して読みこみ直す。とりこんだ音源と記録は消えない',
         upd);
 
   const rs = el('button', 'ghost', 'ぜんぶ わすれる');
