@@ -1,8 +1,8 @@
 // ふだっち — オフライン用 Service Worker
 // アプリ本体とデータは先にキャッシュする。音源は使った分だけ後から貯める。
-const V = "fudacchi-v14";
+const V = "fudacchi-v15";
 const SHELL = ['./', './index.html', './style.css', './app.js', './srs.js', './manifest.json',
-               './data/poems.json', './data/goshoku.json',
+               './data/poems.json', './data/goshoku.json', './data/bgm.json',
                './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png'];
 
 self.addEventListener('install', e => {

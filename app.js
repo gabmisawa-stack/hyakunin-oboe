@@ -3,7 +3,7 @@
 
 import { emptyRecord, gradeRecord, orderPool, isWeak, pickDistractors } from './srs.js';
 
-const BUILD = '1.6.0 / 2026-09-01';   // 設定画面に出す。iPadが古い版を掴んでいないかの確認用
+const BUILD = '1.7.0 / 2026-09-01';   // 設定画面に出す。iPadが古い版を掴んでいないかの確認用
 
 const $ = s => document.querySelector(s);
 const el = (t, c, x) => { const n = document.createElement(t); if (c) n.className = c;
@@ -31,7 +31,8 @@ const MODES = [
 const FAST_CHOICES = [4000, 5000, 7000];
 const DEF_SETTINGS = { cardCount:8, sessionLen:20, showKana:true, colorHint:true,
                        stopOnCorrect:true, fastMs:5000, previewFlip:true,
-                       swapParts:false, memoSec:60, karafuda:false, profile:'なつ' };
+                       swapParts:false, memoSec:60, karafuda:false,
+                       bgm:true, bgmVol:35, profile:'なつ' };
 let S = { ...DEF_SETTINGS, ...JSON.parse(localStorage.getItem('fudacchi.settings') || '{}') };
 if (!FAST_CHOICES.includes(S.fastMs)) S.fastMs = 5000;   // 旧設定(3秒)からの引っ越し
 const saveSettings = () => localStorage.setItem('fudacchi.settings', JSON.stringify(S));
@@ -172,16 +173,69 @@ function pickDialog(title, items) {
   });
 }
 
+/* ==================== BGM ==================== */
+// 読み上げのない静かなモードとホーム画面で和の曲を流す。
+// 毎回おなじだと飽きるので、曲は毎回ランダムに選び、終わるとまた別の曲になる。
+const Bgm = (() => {
+  let el = null, list = [], last = -1, want = false;
+  const pick = () => {
+    if (list.length < 2) return 0;
+    let i; do { i = Math.floor(Math.random() * list.length); } while (i === last);
+    return last = i;
+  };
+  const fade = (to, ms = 800) => {
+    if (!el) return;
+    const from = el.volume, t0 = performance.now();
+    const step = () => {
+      const r = Math.min(1, (performance.now() - t0) / ms);
+      el.volume = from + (to - from) * r;
+      if (r < 1) requestAnimationFrame(step);
+      else if (to === 0) { el.pause(); }
+    };
+    step();
+  };
+  return {
+    async init() {
+      try { list = await fetch('data/bgm.json').then(r => r.json()); } catch { list = []; }
+    },
+    count: () => list.length,
+    /** 静かな画面にいるあいだ流す */
+    start() {
+      want = true;
+      if (!S.bgm || !list.length) return;
+      const vol = Math.max(0, Math.min(1, (S.bgmVol ?? 35) / 100));
+      if (el && !el.paused) { fade(vol); return; }
+      if (!el) {
+        el = new Audio();
+        el.addEventListener('ended', () => { if (want && S.bgm) this.next(); });
+      }
+      el.src = 'audio/bgm/' + list[pick()];
+      el.volume = 0;
+      el.play().then(() => fade(vol)).catch(() => {});
+    },
+    next() { if (!list.length || !el) return;
+      el.src = 'audio/bgm/' + list[pick()]; el.volume = 0;
+      el.play().then(() => fade(Math.max(0, Math.min(1, (S.bgmVol ?? 35) / 100)))).catch(() => {}); },
+    stop() { want = false; fade(0, 500); },
+    setVol() { if (el && !el.paused) el.volume = Math.max(0, Math.min(1, (S.bgmVol ?? 35) / 100)); },
+  };
+})();
+// 読み上げが鳴るモードでは流さない（声とぶつかる）
+const QUIET_MODES = new Set(['kimari', 'match', 'ansho']);
+
 /* ==================== 画面遷移 ==================== */
 const SCREENS = ['home', 'session', 'result', 'stats', 'settings'];
 function go(name) {
   SCREENS.forEach(s => $('#' + s).classList.toggle('on', s === name));
+  if (name === 'session' && !QUIET_MODES.has(pickMode)) Bgm.stop(); else Bgm.start();
   if (name === 'stats') renderStats();
   if (name === 'settings') renderSettings();
   if (name === 'home') renderHome();
 }
 document.addEventListener('click', e => {
   Audio_.unlock();
+  if (![...document.querySelectorAll('.screen.on')].some(s => s.id === 'session')
+      || QUIET_MODES.has(pickMode)) Bgm.start();
   const g = e.target.closest('[data-go]'); if (g) go(g.dataset.go);
 });
 
@@ -1016,6 +1070,16 @@ function renderSettings() {
         'とめる＝取れたらすぐ次へ（テンポ重視）。とめない＝下の句まで最後まで流す（耳で覚える。本物の音源は1首24秒。タップで次へ進める）',
         seg([[true,'とめる'],[false,'とめない']], S.stopOnCorrect, v => S.stopOnCorrect = v));
 
+  const m = card('おんがく');
+  field(m, `せいかいのないときの BGM　${Bgm.count()}曲`,
+        '読み上げのないモード（決まり字クイズ・上の句→下の句・暗唱チェック）とホーム画面で流れる。'
+        + '毎回ランダムに選ばれる',
+        seg([[true,'ながす'],[false,'ながさない']], S.bgm,
+            v => { S.bgm = v; v ? Bgm.start() : Bgm.stop(); }));
+  field(m, 'BGMの おおきさ', '',
+        seg([[20,'小'],[35,'ふつう'],[55,'大']], S.bgmVol,
+            v => { S.bgmVol = v; Bgm.setVol(); }));
+
   const a = card('よみあげ音声');
   const n = Audio_.importedCount();
   const imp = el('div');
@@ -1191,6 +1255,7 @@ function renderAudioCheck() {
   ]);
   POEMS = pj; GOSHOKU = gj; POEMS.forEach(p => BY_ID[p.id] = p);
   await Audio_.init();
+  await Bgm.init();
   go('home');
   if ('serviceWorker' in navigator) {
     // 新しい版が有効になったら、自動で読み込み直す。
