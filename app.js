@@ -3,7 +3,7 @@
 
 import { emptyRecord, gradeRecord, orderPool, isWeak, pickDistractors } from './srs.js';
 
-const BUILD = '1.5.0 / 2026-09-01';   // 設定画面に出す。iPadが古い版を掴んでいないかの確認用
+const BUILD = '1.6.0 / 2026-09-01';   // 設定画面に出す。iPadが古い版を掴んでいないかの確認用
 
 const $ = s => document.querySelector(s);
 const el = (t, c, x) => { const n = document.createElement(t); if (c) n.className = c;
@@ -16,7 +16,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 let POEMS = [], GOSHOKU = null, BY_ID = {};
 const MODES = [
   { id:'oboe',  nm:'はじめて おぼえる',
-    ds:'まだ知らない5首を、上の句と下の句をならべて見せてから、その5首だけで試す。最初はここから' },
+    ds:'5首を8だんかいで。見る→1文字かくす→2→3→4文字→2択→3択→4択。'
+     + 'できたら先へ、まちがえたら1つもどってすぐやり直し' },
   { id:'tori',  nm:'札取り',        ds:'読み上げを聞いて、取り札をタップ。競技かるた本番に一番近い形' },
   { id:'kimari',nm:'決まり字クイズ',ds:'一文字ずつ出てくる。何文字目で分かるかを記録する' },
   { id:'match', nm:'上の句→下の句', ds:'上の句を見て下の句を選ぶ。音を出さずにできる' },
@@ -270,21 +271,30 @@ $('#startBtn').onclick = () => startSession();
 $('#againBtn').onclick = () => startSession();
 
 /* ==================== セッション ==================== */
-let Q = [], qi = 0, log = [], batch = [];
+let Q = [], qi = 0, log = [], batch = [], oboe = null;
 
 const OBOE_BATCH = 5;   // 一度に紹介する首数。多いと覚える前に忘れる
+const OBOE_MAX_STEP = 44;
+// 変化のある繰り返し。同じ歌を、少しずつ形を変えて何度も出す。
+//  0 みる           上の句と下の句をぜんぶ見せる＋音
+//  1〜4 かくす      下の句のあたまを 1・2・3・4文字かくして、かなを順にえらぶ
+//  5〜7 えらぶ      下の句を 2択・3択・4択
+const LV = [
+  { k:'show' },
+  { k:'mask', n:1 }, { k:'mask', n:2 }, { k:'mask', n:3 }, { k:'mask', n:4 },
+  { k:'pick', n:2 }, { k:'pick', n:3 }, { k:'pick', n:4 },
+];
+const LV_NAME = ['みる','1もじ','2もじ','3もじ','4もじ','2たく','3たく','4たく'];
 
 function startSession() {
   if (pickMode === 'shiai') return startShiai();
   const pool = poolFor();
   if (pickMode === 'oboe') {
-    // まだ身についていないものから5首。「見せる→2択→4択」の順に並べる
+    // まだ身についていないものから5首。出す順はその場で決める（oboeNext）
     batch = selectPoems(pool, Math.min(OBOE_BATCH, pool.length));
-    Q = [
-      ...batch.map(p => ({ poem: p, kind: 'show' })),
-      ...shuffle(batch.map(p => ({ poem: p, kind: 'test2' }))),
-      ...shuffle(batch.map(p => ({ poem: p, kind: 'test4' }))),
-    ];
+    oboe = { lv: new Map(batch.map(p => [p.id, Math.min(rec(p.id).lv || 0, 7)])),
+             again: null, step: 0, last: new Map() };
+    Q = [];
   } else {
     batch = [];
     Q = selectPoems(pool, Math.min(S.sessionLen, pool.length)).map(p => ({ poem: p, kind: null }));
@@ -295,8 +305,34 @@ function startSession() {
 $('#quitBtn').onclick = () => { Audio_.stop();
   if (shiai) { shiai.done = true; clearInterval(shiai.timer); } go('home'); };
 
+/** 暗記モードの次の1問。
+ *  ・まちがえた直後は同じ歌をもう一度（直後の反復がいちばん残る）
+ *  ・そうでなければ、いちばん進んでいない歌を出す。5首を回すので間隔が自然に開く
+ *  ・見せた直後だけは、間をあけずにその歌を試す */
+function oboeNext() {
+  if (oboe.step >= OBOE_MAX_STEP) return null;
+  if (oboe.again) { const p = oboe.again; oboe.again = null; return p; }
+  const rest = batch.filter(p => (oboe.lv.get(p.id) ?? 0) <= 7);
+  if (!rest.length) return null;
+  rest.sort((a, b) => (oboe.lv.get(a.id) - oboe.lv.get(b.id))
+                   || ((oboe.last.get(a.id) ?? 0) - (oboe.last.get(b.id) ?? 0)));
+  return rest[0];
+}
+
 function nextQuestion() {
   Audio_.stop();
+  if (pickMode === 'oboe') {
+    const poem = oboeNext();
+    if (!poem) return finish();
+    oboe.step++; oboe.last.set(poem.id, oboe.step);
+    const lv = oboe.lv.get(poem.id) ?? 0;
+    $('#progFill').style.width = ([...oboe.lv.values()].reduce((s,v)=>s+Math.min(v,8),0)
+                                  / (batch.length * 8) * 100) + '%';
+    $('#counter').textContent = `${LV_NAME[lv]}　${[...oboe.lv.values()].filter(v=>v>7).length}/${batch.length}`;
+    $('#feedback').className = 'feedback'; $('#feedback').textContent = '';
+    const spec = LV[lv];
+    return (spec.k === 'show' ? qShow : spec.k === 'mask' ? qMask : qOboeTest)(poem, spec.n);
+  }
   if (qi >= Q.length) return finish();
   $('#progFill').style.width = (qi / Q.length * 100) + '%';
   $('#counter').textContent = `${qi + 1} / ${Q.length}`;
@@ -312,6 +348,7 @@ const tapOnce = () => new Promise(res =>
   addEventListener('pointerdown', res, { once: true }));
 
 async function advance(poem, ok, ms, kind) {
+  if (pickMode === 'oboe') return oboeAdvance(poem, ok, ms, kind);
   if (kind === 'show') { qi++; return nextQuestion(); }   // 見せただけ。記録しない
   const g = grade(poem.id, ok, ms);
   log.push({ id: poem.id, ok, ms });
@@ -493,7 +530,7 @@ const markAnswer = (nodes, poem, picked) => {
 // 何も知らない状態で当てさせても、当てずっぽうにしかならない。まず全部見せる。
 function qShow(poem) {
   const st = $('#stage'); st.innerHTML = '';
-  st.append(el('div', 'hint', `おぼえよう　（${qi + 1} / ${OBOE_BATCH}）`));
+  st.append(el('div', 'hint', 'おぼえよう　このあと すぐ ためすよ'));
 
   const kami = el('div', 'kanji');
   kami.append(el('span', 'reveal', poem.kaminoku_kana.slice(0, poem.kimariji_len)),
@@ -510,15 +547,61 @@ function qShow(poem) {
   board.style.gridTemplateColumns = '';
   const again = el('button', 'ghost big', '♪ もういちど きく');
   again.onclick = () => Audio_.play(poem);
-  const next = el('button', 'yes', 'つぎへ');
+  const next = el('button', 'yes', 'おぼえた！');
   next.onclick = () => advance(poem, true, null, 'show');
   board.append(again, next);
   Audio_.play(poem);
 }
 
-/* ---- はじめて おぼえる：② その5首だけで試す ---- */
-function qOboeTest(poem, kind) {
-  const n = kind === 'test2' ? 2 : 4;
+/* ---- はじめて おぼえる：② 下の句のあたまを N文字かくす ---- */
+// 下の句はほとんど見えているので、思い出すのは頭の数文字だけ。
+// 「見せる」と「4択」の間をつなぐ段。決まり字を体で覚える形でもある。
+function qMask(poem, n) {
+  const kana = poem.shimonoku_kana;
+  const answer = [...kana.slice(0, n)];
+  const st = $('#stage'); st.innerHTML = '';
+  st.append(el('div', 'hint', `下の句の あたま ${n}もじを うめよう`));
+  const line = el('div', 'kanji');
+  line.append(el('span', 'reveal', poem.kaminoku_kana.slice(0, poem.kimariji_len)),
+              el('span', '', poem.kaminoku_kana.slice(poem.kimariji_len)));
+  st.append(line, el('div', 'kana', poem.kaminoku));
+
+  const board = $('#board'); board.className = 'maskarea'; board.innerHTML = '';
+  board.style.gridTemplateColumns = '';
+  const shown = el('div', 'maskline');
+  const slots = [];
+  for (let i = 0; i < n; i++) { const s = el('span', 'slot', '◯'); slots.push(s); shown.append(s); }
+  shown.append(el('span', '', kana.slice(n)));
+  board.append(shown);
+
+  // えらぶ かな。正解の文字＋よその歌からとった3文字
+  const pool = shuffle(POEMS.filter(p => p.id !== poem.id)
+    .map(p => p.shimonoku_kana[0]).filter(c => !answer.includes(c)));
+  const chips = shuffle([...answer, ...[...new Set(pool)].slice(0, 3)]);
+  const row = el('div', 'chiprow');
+  let at = 0, done = false, t0 = performance.now();
+  for (const c of chips) {
+    const b = el('button', 'chip', c);
+    b.onclick = () => {
+      if (done) return;
+      if (c === answer[at]) {
+        slots[at].textContent = c; slots[at].classList.add('ok');
+        b.disabled = true; at++;
+        if (at >= n) { done = true; advance(poem, true, performance.now() - t0); }
+      } else {
+        done = true;
+        b.classList.add('ng');
+        answer.forEach((ch, i) => { slots[i].textContent = ch; slots[i].classList.add('ng'); });
+        advance(poem, false, null);
+      }
+    };
+    row.append(b);
+  }
+  board.append(row);
+}
+
+/* ---- はじめて おぼえる：③ その5首だけで試す ---- */
+function qOboeTest(poem, n) {
   const st = $('#stage'); st.innerHTML = '';
   st.append(el('div', 'hint', n === 2 ? 'どっちかな？' : 'どれかな？'));
   const line = el('div', 'kanji');
@@ -539,11 +622,7 @@ function qOboeTest(poem, kind) {
     b.onclick = () => {
       if (done) return; done = true;
       nodes.forEach((x, id) => { x.onclick = null; if (id === poem.id) x.classList.add('correct'); });
-      if (c.id !== poem.id) {
-        b.classList.add('wrong');
-        // まちがえたら、その場でもう一度うしろに回す
-        Q.splice(qi + 1, 0, { poem, kind });
-      }
+      if (c.id !== poem.id) b.classList.add('wrong');
       advance(poem, c.id === poem.id, performance.now() - t0);
     };
     nodes.set(c.id, b); board.append(b);
@@ -811,6 +890,32 @@ const fmt = ms => {
   const s = ms / 1000;
   return s >= 60 ? `${Math.floor(s/60)}分${(s%60).toFixed(1)}秒` : `${s.toFixed(1)}秒`;
 };
+
+async function oboeAdvance(poem, ok, ms, kind) {
+  const lv = oboe.lv.get(poem.id) ?? 0;
+  if (kind === 'show') {
+    oboe.lv.set(poem.id, 1);
+    oboe.again = poem;                      // 見せた直後に、間をあけずに試す
+    return nextQuestion();
+  }
+  grade(poem.id, ok, ms);
+  log.push({ id: poem.id, ok, ms });
+  if (ok) {
+    // すらすら答えたら1つ飛ばす。分かっている歌に8回つきあわせない
+    const jump = (ms != null && ms < S.fastMs) ? 2 : 1;
+    oboe.lv.set(poem.id, lv + jump);
+    rec(poem.id).lv = Math.min(8, lv + jump); saveProgress();
+    say(lv + jump > 7 ? `${poem.kimariji} — おぼえた！` : 'せいかい！', 'ok');
+    await sleep(700);
+  } else {
+    oboe.lv.set(poem.id, Math.max(1, lv - 1));   // 1つもどす
+    rec(poem.id).lv = Math.max(1, lv - 1); saveProgress();
+    oboe.again = poem;                            // そしてすぐもう一度
+    say(`${poem.kimariji} — ${poem.shimonoku}`, 'ng');
+    await sleep(1800);
+  }
+  nextQuestion();
+}
 
 /* ==================== 結果 ==================== */
 function finish() {

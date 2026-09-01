@@ -3,7 +3,8 @@
 
 // 箱ごとの復習間隔（ミリ秒）。0＝同じセッション内でまた出す
 export const INTERVAL = [0, 0, 864e5, 3 * 864e5, 7 * 864e5, 14 * 864e5];
-export const emptyRecord = () => ({ box:0, seen:0, correct:0, lastSeen:0, fastest:null, recent:[] });
+// lv＝暗記モードの到達レベル（0=まだ見せていない … 8=4択まで通った）
+export const emptyRecord = () => ({ box:0, seen:0, correct:0, lastSeen:0, fastest:null, recent:[], lv:0 });
 
 /** 1問の結果を記録に反映する。r は破壊的に更新し、判定を返す。
  *  正解でも fastMs 以上かかったら箱を上げない（§7.2 かるたは速さが勝負）。 */
