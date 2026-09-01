@@ -3,7 +3,7 @@
 
 import { emptyRecord, gradeRecord, orderPool, isWeak, pickDistractors } from './srs.js';
 
-const BUILD = '1.9.0 / 2026-09-01';   // 設定画面に出す。iPadが古い版を掴んでいないかの確認用
+const BUILD = '1.9.1 / 2026-09-01';   // 設定画面に出す。iPadが古い版を掴んでいないかの確認用
 
 const $ = s => document.querySelector(s);
 const el = (t, c, x) => { const n = document.createElement(t); if (c) n.className = c;
@@ -32,7 +32,7 @@ const FAST_CHOICES = [4000, 5000, 7000];
 const DEF_SETTINGS = { cardCount:8, sessionLen:20, showKana:true, colorHint:true,
                        stopOnCorrect:true, fastMs:5000, previewFlip:true,
                        swapParts:false, memoSec:60, karafuda:false,
-                       bgm:true, bgmVol:35, muted:false, profile:'' };
+                       bgm:true, bgmVol:35, muted:false, noticeSeen:false, profile:'' };
 let S = { ...DEF_SETTINGS, ...JSON.parse(localStorage.getItem('fudacchi.settings') || '{}') };
 if (!FAST_CHOICES.includes(S.fastMs)) S.fastMs = 5000;   // 旧設定(3秒)からの引っ越し
 const saveSettings = () => localStorage.setItem('fudacchi.settings', JSON.stringify(S));
@@ -325,6 +325,17 @@ function renderHome() {
     b.onclick = () => { pickMode = m.id; renderHome(); };
     mw.append(b);
   }
+  // 同梱しているのは練習用のパブリックドメイン音源。本物の朗詠は自分で入れてもらう。
+  // 設定の説明文だけでは気づかれないので、ホームにも出す（一度閉じたら出さない）。
+  const noAudio = !Audio_.importedCount() && !Audio_.splitCount();
+  const nt = $('#audioNotice');
+  nt.classList.toggle('on', noAudio && !S.noticeSeen);
+  nt.querySelector('.nt').textContent =
+    'いまの よみあげは、れんしゅう用の こえです。'
+    + 'ほんものの 読み方（朗詠）の 音源を 入れると、そちらで れんしゅうできます。';
+  $('#noticeX').onclick = e => {
+    e.stopPropagation(); S.noticeSeen = true; saveSettings(); nt.classList.remove('on');
+  };
   $('#startBtn').disabled = !poolFor().length;
   const ub = $('#userBtn');
   ub.textContent = S.profile + ' ▾';

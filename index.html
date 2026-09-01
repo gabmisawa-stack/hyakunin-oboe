@@ -21,7 +21,9 @@
     <input id="whoName" type="text" maxlength="12" autocomplete="off"
            enterkeyhint="go" placeholder="れい：なつ">
     <p class="wnote">きろくは この iPad の なかだけに のこります。<br>
-      あとから せっていで、ほかの ひとを ふやせます。</p>
+      あとから せっていで、ほかの ひとを ふやせます。<br>
+      よみあげは、はじめは れんしゅう用の こえです。<br>
+      ほんものの 読み方の 音源も、あとから 入れられます。</p>
     <button id="whoGo" class="start" disabled>はじめる</button>
   </div>
 </section>
@@ -40,6 +42,12 @@
       <button class="ghost" data-go="settings">せってい</button>
     </div>
   </header>
+
+  <div id="audioNotice" class="notice">
+    <span class="nt"></span>
+    <button class="ghost" data-go="settings">せっていを ひらく</button>
+    <button class="x" id="noticeX" aria-label="とじる">×</button>
+  </div>
 
   <div class="pick">
     <h2>いろを えらぶ　<span id="pickNote" class="picknote"></span></h2>

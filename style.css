@@ -62,6 +62,16 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:0;background:none
 .wnote{margin:.2rem 0 .6rem;color:var(--sub);font-size:.78rem;line-height:1.7}
 #welcome .start{margin-top:.4rem}
 
+/* ---- おしらせ（音源の案内） ---- */
+.notice{display:none;align-items:center;gap:.8rem;
+        background:color-mix(in srgb,var(--accent) 12%,var(--panel));
+        border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);
+        border-radius:.6rem;padding:.6rem .8rem .6rem 1rem}
+.notice.on{display:flex}
+.notice .nt{flex:1;font-size:.86rem;line-height:1.6;color:var(--ink)}
+.notice .ghost{white-space:nowrap;font-size:.86rem;padding:.45rem .8rem}
+.notice .x{color:var(--sub);font-size:1.3rem;line-height:1;padding:.2rem .5rem}
+
 /* ---- 表紙まわり ---- */
 .hero{position:relative;padding:.3rem 0 .8rem}
 /* すやり霞。大和絵で場面を仕切る、あの金の帯 */
