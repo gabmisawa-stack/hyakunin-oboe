@@ -3,7 +3,7 @@
 
 import { emptyRecord, gradeRecord, orderPool, isWeak, pickDistractors } from './srs.js';
 
-const BUILD = '1.7.0 / 2026-09-01';   // 設定画面に出す。iPadが古い版を掴んでいないかの確認用
+const BUILD = '1.8.0 / 2026-09-01';   // 設定画面に出す。iPadが古い版を掴んでいないかの確認用
 
 const $ = s => document.querySelector(s);
 const el = (t, c, x) => { const n = document.createElement(t); if (c) n.className = c;
@@ -32,7 +32,7 @@ const FAST_CHOICES = [4000, 5000, 7000];
 const DEF_SETTINGS = { cardCount:8, sessionLen:20, showKana:true, colorHint:true,
                        stopOnCorrect:true, fastMs:5000, previewFlip:true,
                        swapParts:false, memoSec:60, karafuda:false,
-                       bgm:true, bgmVol:35, profile:'なつ' };
+                       bgm:true, bgmVol:35, muted:false, profile:'なつ' };
 let S = { ...DEF_SETTINGS, ...JSON.parse(localStorage.getItem('fudacchi.settings') || '{}') };
 if (!FAST_CHOICES.includes(S.fastMs)) S.fastMs = 5000;   // 旧設定(3秒)からの引っ越し
 const saveSettings = () => localStorage.setItem('fudacchi.settings', JSON.stringify(S));
@@ -119,13 +119,14 @@ const Audio_ = (() => {
         a.addEventListener('ended', done); a.addEventListener('pause', done);
       });
     },
+    setMuted(m) { if (cur) cur.muted = m; },
     stop() { if (cur) { cur.pause(); cur = null; } try { speechSynthesis.cancel(); } catch {} },
     // 取り込んだ音源 → LibriVox(PD) → iPadの合成音声 の順に落ちる。
     // part='kami' で上の句だけ、'shimo' で下の句だけ（分割音源があるときだけ効く）
     async play(poem, onEnd, part) {
       this.stop();
       const tryEl = async src => new Promise(res => {
-        const a = new Audio(src); cur = a;
+        const a = new Audio(src); cur = a; a.muted = !!S.muted;
         a.onended = () => { onEnd?.(); res(true); };
         a.onerror = () => res(false);
         a.play().then(() => {}).catch(() => res(false));
@@ -176,11 +177,30 @@ function pickDialog(title, items) {
 /* ==================== BGM ==================== */
 // 読み上げのない静かなモードとホーム画面で和の曲を流す。
 // 毎回おなじだと飽きるので、曲は毎回ランダムに選び、終わるとまた別の曲になる。
+// どのモードでどの曲を鳴らすかは決めておく。
+// 「音を聞けばどのモードか分かる」ようにするため。
+// 同じ系統の2テイク（-a/-b）は同じ楽器・同じテンポなので、
+// どちらが鳴っても耳で見分けはつく。まったく同じ音の繰り返しにはしない。
+// ⚠️ いまは4系統しかないので、結果・せいせき・せっていは他と共用になっている。
+//    3系統（結果発表100bpm／篠笛65bpm／水琴窟45bpm）を足せば全部が別の曲になる。
+//    足すときは data/bgm.json にファイル名を入れて、ここの行を書き換えるだけ。
+const BGM_FOR = {
+  home:     'koto-morning',    // 箏ソロ60。迎える画面
+  kimari:   'paper-lantern',   // 箏・三味線85。少し動きがある
+  match:    'breath-of-pine',  // 尺八70。じっくり選ぶ
+  ansho:    'court-silence',   // 笙・篳篥50。静かに思い出す
+  result:   'paper-lantern',   // ★暫定。本来は「結果発表」用の曲がほしい
+  stats:    'breath-of-pine',  // ★暫定。本来は篠笛のソロ
+  settings: 'court-silence',   // ★暫定。本来は水琴窟のミニマル
+};
 const Bgm = (() => {
-  let el = null, list = [], last = -1, want = false;
+  let el = null, list = [], last = -1, want = false, family = 'home';
   const pick = () => {
-    if (list.length < 2) return 0;
-    let i; do { i = Math.floor(Math.random() * list.length); } while (i === last);
+    const fam = BGM_FOR[family] || BGM_FOR.home;
+    const idx = list.map((n, i) => [n, i]).filter(([n]) => n.startsWith(fam)).map(([, i]) => i);
+    const from = idx.length ? idx : list.map((_, i) => i);
+    if (from.length < 2) return last = from[0] ?? 0;
+    let i; do { i = from[Math.floor(Math.random() * from.length)]; } while (i === last);
     return last = i;
   };
   const fade = (to, ms = 800) => {
@@ -199,10 +219,13 @@ const Bgm = (() => {
       try { list = await fetch('data/bgm.json').then(r => r.json()); } catch { list = []; }
     },
     count: () => list.length,
-    /** 静かな画面にいるあいだ流す */
-    start() {
+    /** 静かな画面にいるあいだ流す。which でモードごとの曲に切り替える */
+    start(which) {
+      const changed = which && which !== family;
+      if (which) family = which;
       want = true;
-      if (!S.bgm || !list.length) return;
+      if (!S.bgm || S.muted || !list.length) return;
+      if (changed && el && !el.paused) { this.next(); return; }
       const vol = Math.max(0, Math.min(1, (S.bgmVol ?? 35) / 100));
       if (el && !el.paused) { fade(vol); return; }
       if (!el) {
@@ -213,11 +236,12 @@ const Bgm = (() => {
       el.volume = 0;
       el.play().then(() => fade(vol)).catch(() => {});
     },
-    next() { if (!list.length || !el) return;
+    next() { if (!list.length || !el || S.muted) return;
       el.src = 'audio/bgm/' + list[pick()]; el.volume = 0;
       el.play().then(() => fade(Math.max(0, Math.min(1, (S.bgmVol ?? 35) / 100)))).catch(() => {}); },
     stop() { want = false; fade(0, 500); },
     setVol() { if (el && !el.paused) el.volume = Math.max(0, Math.min(1, (S.bgmVol ?? 35) / 100)); },
+    muteChanged() { if (S.muted) this.stop(); else this.start(); },
   };
 })();
 // 読み上げが鳴るモードでは流さない（声とぶつかる）
@@ -227,15 +251,16 @@ const QUIET_MODES = new Set(['kimari', 'match', 'ansho']);
 const SCREENS = ['home', 'session', 'result', 'stats', 'settings'];
 function go(name) {
   SCREENS.forEach(s => $('#' + s).classList.toggle('on', s === name));
-  if (name === 'session' && !QUIET_MODES.has(pickMode)) Bgm.stop(); else Bgm.start();
+  if (name === 'session' && !QUIET_MODES.has(pickMode)) Bgm.stop();
+  else Bgm.start(name === 'session' ? pickMode : name);
   if (name === 'stats') renderStats();
   if (name === 'settings') renderSettings();
   if (name === 'home') renderHome();
 }
 document.addEventListener('click', e => {
   Audio_.unlock();
-  if (![...document.querySelectorAll('.screen.on')].some(s => s.id === 'session')
-      || QUIET_MODES.has(pickMode)) Bgm.start();
+  const on = [...document.querySelectorAll('.screen.on')].map(s => s.id)[0] || 'home';
+  if (on !== 'session' || QUIET_MODES.has(pickMode)) Bgm.start(on === 'session' ? pickMode : on);
   const g = e.target.closest('[data-go]'); if (g) go(g.dataset.go);
 });
 
@@ -1247,6 +1272,21 @@ function renderAudioCheck() {
   r.append(list); b.append(r);
 }
 
+/* ==================== ミュート ==================== */
+// どの画面からでも一発で音を消せるように、右下に出しっぱなしにする。
+// 読み上げも止める（音を消したい場面では両方うるさい）。
+// ただし「鳴らさない」のではなく「消音で鳴らす」ので、試合の進行は止まらない。
+function renderMute() {
+  $('#muteBtn').classList.toggle('muted', !!S.muted);
+}
+$('#muteBtn').onclick = e => {
+  e.stopPropagation();
+  S.muted = !S.muted; saveSettings();
+  Audio_.setMuted(S.muted);
+  Bgm.muteChanged();
+  renderMute();
+};
+
 /* ==================== 起動 ==================== */
 (async () => {
   const [pj, gj] = await Promise.all([
@@ -1256,6 +1296,7 @@ function renderAudioCheck() {
   POEMS = pj; GOSHOKU = gj; POEMS.forEach(p => BY_ID[p.id] = p);
   await Audio_.init();
   await Bgm.init();
+  renderMute();
   go('home');
   if ('serviceWorker' in navigator) {
     // 新しい版が有効になったら、自動で読み込み直す。
