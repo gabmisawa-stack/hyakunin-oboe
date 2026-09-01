@@ -36,10 +36,11 @@ body{
 button{font-family:inherit;color:inherit;cursor:pointer;border:0;background:none}
 
 .screen{display:none;height:100%;flex-direction:column;gap:1.1rem;padding:1.1rem 1.4rem}
-#home{gap:1.5rem;justify-content:center}        /* ひとかたまりとして中央に置く */
+/* ⚠️ ヘッダを絶対配置にしてはいけない。すやり霞の金線と、下の「いろを えらぶ」が
+   重なって読めなくなる（iPad実機で発覚）。ふつうに上から流す。 */
+#home{gap:1.2rem;justify-content:flex-start}
 #home .pick{display:flex;flex-direction:column;gap:.6rem}
-#home .apphead{position:absolute;top:1.1rem;left:1.4rem;right:1.4rem}
-#home{padding-top:6.5rem;position:relative}
+#home .hero{flex:0 0 auto;margin-bottom:.2rem}
 .screen.on{display:flex}
 
 /* ---- ヘッダ ---- */
@@ -47,10 +48,24 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:0;background:none
 .apphead h1{margin:0;font-size:1.9rem;letter-spacing:.14em}
 .apphead h2{margin:0;font-size:1.4rem}
 
+/* ---- さいしょの画面 ---- */
+#welcome{align-items:center;justify-content:center}
+.wbox{display:flex;flex-direction:column;align-items:center;gap:.9rem;
+      max-width:26rem;width:100%;text-align:center}
+.wbox .brand{justify-content:center}
+.wsub{margin:0;color:var(--sub);font-size:.92rem;letter-spacing:.16em}
+.wlabel{margin-top:1.2rem;color:var(--accent-hi);font-size:1.05rem;letter-spacing:.1em}
+#whoName{width:100%;padding:.85rem 1rem;font-size:1.35rem;text-align:center;
+         font-family:inherit;color:var(--fuda-ink);background:var(--fuda);
+         border:2px solid var(--line);border-radius:.5rem;letter-spacing:.1em}
+#whoName:focus{outline:none;border-color:var(--accent)}
+.wnote{margin:.2rem 0 .6rem;color:var(--sub);font-size:.78rem;line-height:1.7}
+#welcome .start{margin-top:.4rem}
+
 /* ---- 表紙まわり ---- */
-.hero{position:relative;padding:.4rem 0 1rem}
+.hero{position:relative;padding:.3rem 0 .8rem}
 /* すやり霞。大和絵で場面を仕切る、あの金の帯 */
-.hero::after{content:"";position:absolute;left:-1.4rem;right:-1.4rem;bottom:0;height:2px;
+.hero::after{content:"";position:absolute;left:-1.4rem;right:-1.4rem;bottom:-.1rem;height:2px;
   background:linear-gradient(90deg,transparent,var(--accent) 12%,var(--accent-hi) 48%,var(--accent) 82%,transparent);
   opacity:.55}
 .brand{display:flex;align-items:baseline;gap:.9rem}
@@ -90,12 +105,13 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:0;background:none
 .cbtn[aria-pressed="true"]{transform:translateY(-8px);
       box-shadow:0 0 0 3px var(--accent-hi), 0 12px 22px rgba(0,0,0,.5)}
 .cbtn:disabled{opacity:.45}
-.modepicks{display:flex;gap:.7rem;flex-wrap:wrap}
+.modepicks{display:grid;gap:.7rem;grid-template-columns:repeat(auto-fit,minmax(15rem,1fr))}
 .mbtn{border:1px solid var(--line);background:var(--panel);border-radius:.7rem;
-      padding:1rem 1.2rem;text-align:left;flex:1 1 12rem;
+      padding:.9rem 1.1rem;text-align:left;min-width:0;
       box-shadow:0 1px 0 rgba(230,205,126,.08) inset}
-.mbtn .nm{display:block;font-size:1.22rem;letter-spacing:.05em}
-.mbtn .ds{display:block;font-size:.78rem;color:var(--sub);margin-top:.25rem;line-height:1.4}
+.mbtn .nm{display:block;font-size:1.15rem;letter-spacing:.02em;
+          white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mbtn .ds{display:block;font-size:.76rem;color:var(--sub);margin-top:.3rem;line-height:1.45}
 .mbtn[aria-pressed="true"]{border-color:var(--accent);background:#252b3d;
       box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 45%,transparent)}
 .mbtn[aria-pressed="true"] .nm{color:var(--accent-hi)}

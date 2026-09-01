@@ -9,6 +9,23 @@
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="stylesheet" href="style.css">
 
+<!-- ============ さいしょの画面（名前をきく） ============ -->
+<section id="welcome" class="screen">
+  <div class="wbox">
+    <div class="brand">
+      <span class="seal">歌</span>
+      <h1>ふだっち</h1>
+    </div>
+    <p class="wsub">百人一首の 決まり字を おぼえる れんしゅう</p>
+    <label class="wlabel" for="whoName">なまえを おしえてね</label>
+    <input id="whoName" type="text" maxlength="12" autocomplete="off"
+           enterkeyhint="go" placeholder="れい：なつ">
+    <p class="wnote">きろくは この iPad の なかだけに のこります。<br>
+      あとから せっていで、ほかの ひとを ふやせます。</p>
+    <button id="whoGo" class="start" disabled>はじめる</button>
+  </div>
+</section>
+
 <!-- ============ ホーム ============ -->
 <section id="home" class="screen">
   <header class="apphead hero">

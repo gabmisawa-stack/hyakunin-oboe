@@ -3,7 +3,7 @@
 
 import { emptyRecord, gradeRecord, orderPool, isWeak, pickDistractors } from './srs.js';
 
-const BUILD = '1.8.1 / 2026-09-01';   // 設定画面に出す。iPadが古い版を掴んでいないかの確認用
+const BUILD = '1.9.0 / 2026-09-01';   // 設定画面に出す。iPadが古い版を掴んでいないかの確認用
 
 const $ = s => document.querySelector(s);
 const el = (t, c, x) => { const n = document.createElement(t); if (c) n.className = c;
@@ -32,7 +32,7 @@ const FAST_CHOICES = [4000, 5000, 7000];
 const DEF_SETTINGS = { cardCount:8, sessionLen:20, showKana:true, colorHint:true,
                        stopOnCorrect:true, fastMs:5000, previewFlip:true,
                        swapParts:false, memoSec:60, karafuda:false,
-                       bgm:true, bgmVol:35, muted:false, profile:'なつ' };
+                       bgm:true, bgmVol:35, muted:false, profile:'' };
 let S = { ...DEF_SETTINGS, ...JSON.parse(localStorage.getItem('fudacchi.settings') || '{}') };
 if (!FAST_CHOICES.includes(S.fastMs)) S.fastMs = 5000;   // 旧設定(3秒)からの引っ越し
 const saveSettings = () => localStorage.setItem('fudacchi.settings', JSON.stringify(S));
@@ -40,13 +40,21 @@ const saveSettings = () => localStorage.setItem('fudacchi.settings', JSON.string
 /* ---- つかう人（プロフィール）---- */
 // 記録は fudacchi.progress.<名前> に分かれて入る。切り替えても互いに影響しない。
 const PROFILES_KEY = 'fudacchi.profiles';
-const profiles = () => {
-  const l = JSON.parse(localStorage.getItem(PROFILES_KEY) || 'null');
-  if (l && l.length) return l;
-  const init = [S.profile || 'なつ'];
-  localStorage.setItem(PROFILES_KEY, JSON.stringify(init));
-  return init;
-};
+const profiles = () => JSON.parse(localStorage.getItem(PROFILES_KEY) || '[]');
+
+// もう使っている端末を、名前をきく画面に戻さないための引き継ぎ。
+// 一覧が無くても、記録のキー（fudacchi.progress.なつ 等）が残っていれば拾って登録する。
+(function migrate() {
+  if (profiles().length) return;
+  const found = Object.keys(localStorage)
+    .filter(k => k.startsWith('fudacchi.progress.'))
+    .map(k => k.slice('fudacchi.progress.'.length))
+    .filter(Boolean);
+  if (found.length) {
+    localStorage.setItem(PROFILES_KEY, JSON.stringify(found));
+    if (!found.includes(S.profile)) { S.profile = found[0]; saveSettings(); }
+  }
+})();
 const saveProfiles = l => localStorage.setItem(PROFILES_KEY, JSON.stringify(l));
 
 const progKey = () => `fudacchi.progress.${S.profile}`;
@@ -247,9 +255,10 @@ const Bgm = (() => {
 const QUIET_MODES = new Set(['kimari', 'match', 'ansho']);
 
 /* ==================== 画面遷移 ==================== */
-const SCREENS = ['home', 'session', 'result', 'stats', 'settings'];
+const SCREENS = ['welcome', 'home', 'session', 'result', 'stats', 'settings'];
 function go(name) {
   SCREENS.forEach(s => $('#' + s).classList.toggle('on', s === name));
+  if (name === 'welcome') { Bgm.start('home'); return; }
   if (name === 'session' && !QUIET_MODES.has(pickMode)) Bgm.stop();
   else Bgm.start(name === 'session' ? pickMode : name);
   if (name === 'stats') renderStats();
@@ -321,6 +330,18 @@ function renderHome() {
   ub.textContent = S.profile + ' ▾';
   ub.onclick = openProfilePicker;
 }
+/* ---- さいしょの画面 ---- */
+const whoName = $('#whoName'), whoGo = $('#whoGo');
+whoName.addEventListener('input', () => { whoGo.disabled = !whoName.value.trim(); });
+whoName.addEventListener('keydown', e => { if (e.key === 'Enter' && !whoGo.disabled) whoGo.click(); });
+whoGo.onclick = () => {
+  const name = whoName.value.trim().slice(0, 12);
+  if (!name) return;
+  saveProfiles([...new Set([...profiles(), name])]);
+  useProfile(name);
+  go('home');
+};
+
 function useProfile(name) {
   S.profile = name; saveSettings();
   P = JSON.parse(localStorage.getItem(progKey()) || '{}');
@@ -1296,7 +1317,8 @@ $('#muteBtn').onclick = e => {
   await Audio_.init();
   await Bgm.init();
   renderMute();
-  go('home');
+  // だれも登録されていなければ、名前をきく画面から
+  go(profiles().length && S.profile ? 'home' : 'welcome');
   if ('serviceWorker' in navigator) {
     // 新しい版が有効になったら、自動で読み込み直す。
     // これがないと、コードだけ新しくデータが古い、という食い違いが起きる（実際に起きた）。
