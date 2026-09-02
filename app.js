@@ -3,7 +3,7 @@
 
 import { emptyRecord, gradeRecord, orderPool, isWeak, pickDistractors } from './srs.js';
 
-const BUILD = '1.9.3 / 2026-09-01';   // 設定画面に出す。iPadが古い版を掴んでいないかの確認用
+const BUILD = '2.0.0 / 2026-09-02';   // 設定画面に出す。iPadが古い版を掴んでいないかの確認用
 
 const $ = s => document.querySelector(s);
 const el = (t, c, x) => { const n = document.createElement(t); if (c) n.className = c;
@@ -22,8 +22,12 @@ const MODES = [
   { id:'kimari',nm:'決まり字クイズ',ds:'一文字ずつ出てくる。何文字目で分かるかを記録する' },
   { id:'match', nm:'上の句→下の句', ds:'上の句を見て下の句を選ぶ。音を出さずにできる' },
   { id:'ansho', nm:'暗唱チェック',  ds:'下の句を思い出してから答え合わせ。自己申告' },
-  { id:'shiai',  nm:'★ 試合',
-    ds:'20枚をならべて、暗記時間のあと連続で読む。取ると札が消える。タイムとお手つきを記録' },
+  { id:'shiai',  nm:'★ 試合（画面の札）',
+    ds:'画面に20枚ならべて、ひとりで取る。暗記時間のあと連続で読み、取ると札が消える。'
+     + 'タイムとお手つきを記録' },
+  { id:'yomite', nm:'★ よみ手（ほんものの札）',
+    ds:'画面に札は出ない。読むだけ。手もとの五色百人一首をならべて、ふたりで取る。'
+     + 'タップで次の歌へ' },
 ];
 
 /* ==================== 保存 ==================== */
@@ -32,7 +36,9 @@ const FAST_CHOICES = [4000, 5000, 7000];
 const DEF_SETTINGS = { cardCount:8, sessionLen:20, showKana:true, colorHint:true,
                        stopOnCorrect:true, fastMs:5000, previewFlip:true,
                        swapParts:false, memoSec:60, karafuda:false,
-                       bgm:true, bgmVol:35, muted:false, noticeSeen:false, profile:'' };
+                       bgm:true, bgmVol:35, muted:false, noticeSeen:false,
+                       yomiRange:'kami', yomiShow:'none', yomiAuto:false, yomiWait:4,
+                       profile:'' };
 let S = { ...DEF_SETTINGS, ...JSON.parse(localStorage.getItem('fudacchi.settings') || '{}') };
 if (!FAST_CHOICES.includes(S.fastMs)) S.fastMs = 5000;   // 旧設定(3秒)からの引っ越し
 const saveSettings = () => localStorage.setItem('fudacchi.settings', JSON.stringify(S));
@@ -398,6 +404,7 @@ const LV_NAME = ['みる','1もじ','2もじ','3もじ','4もじ','2たく','3�
 
 function startSession() {
   if (pickMode === 'shiai') return startShiai();
+  if (pickMode === 'yomite') return startYomite();
   const pool = poolFor();
   if (pickMode === 'oboe') {
     // まだ身についていないものから5首。出す順はその場で決める（oboeNext）
@@ -413,7 +420,9 @@ function startSession() {
   go('session'); nextQuestion();
 }
 $('#quitBtn').onclick = () => { Audio_.stop();
-  if (shiai) { shiai.done = true; clearInterval(shiai.timer); } go('home'); };
+  if (shiai) { shiai.done = true; clearInterval(shiai.timer); }
+  if (yomi) { yomi.done = true; clearInterval(yomi.timer); }
+  go('home'); };
 
 /** 暗記モードの次の1問。
  *  ・まちがえた直後は同じ歌をもう一度（直後の反復がいちばん残る）
@@ -497,10 +506,14 @@ function fudaGrid(poem, pool, n, onPick, opt = {}) {
   return nodes;
 }
 
-/** 札をめくる（表＝下の句 ⇄ 裏＝上の句と作者） */
+/** 札をめくる（表＝下の句 ⇄ 裏＝上の句と作者）
+ *  ★ めくれるのは1枚だけ。全部めくれると見比べるだけになって、覚える気にならない。
+ *    1枚ずつ「表を見て、裏を思い出す」をやらせる。 */
 function flipFuda(f) {
   const c = f._poem; if (!c) return;
   const toBack = !f.classList.contains('flipped');
+  if (toBack) document.querySelectorAll('#board .fuda.flipped')
+    .forEach(o => { if (o !== f) flipFuda(o); });
   f.classList.toggle('flipped', toBack);
   f.innerHTML = '';
   f.append(toBack ? fudaBack(c) : fudaText(c.shimonoku_lines));
@@ -847,6 +860,89 @@ function qAnsho(poem) {
   board.append(show);
 }
 
+/* ==================== よみ手（ほんものの札で試合する） ==================== */
+// 画面に札は出さない。読むだけ。手もとの五色百人一首をならべて、ふたりで取る。
+// t-asami.sakura.ne.jp/mobile/ogura/ の読上げアプリと同じ役まわり。
+let yomi = null;
+
+function startYomite() {
+  const pool = poolFor();
+  if (!pool.length) return;
+  yomi = { order: shuffle(pool.slice()), i: -1, nextAt: Infinity, done: false };
+  go('session');
+  const board = $('#board');
+  board.className = 'yomite'; board.style.gridTemplateColumns = '';
+  clearInterval(yomi.timer);
+  yomi.timer = setInterval(() => {
+    if (yomi.done) return clearInterval(yomi.timer);
+    if (performance.now() >= yomi.nextAt) yomiNext();
+  }, 150);
+  yomiNext();
+}
+
+function yomiNext() {
+  if (!yomi || yomi.done) return;
+  yomi.nextAt = Infinity;
+  yomi.i++;
+  if (yomi.i >= yomi.order.length) return yomiFinish();
+  const poem = yomi.order[yomi.i];
+  $('#progFill').style.width = (yomi.i / yomi.order.length * 100) + '%';
+  $('#counter').textContent = `${yomi.i + 1} / ${yomi.order.length}`;
+
+  const st = $('#stage'); st.innerHTML = '';
+  st.append(el('div', 'hint', 'ほんものの ふだを ならべて とろう'));
+  // 画面に出す量は設定しだい（非表示／下の句／上の句／ぜんぶ）
+  if (S.yomiShow !== 'none') {
+    if (S.yomiShow === 'kami' || S.yomiShow === 'both') {
+      const line = el('div', 'kanji');
+      line.append(el('span', 'reveal', poem.kaminoku_kana.slice(0, poem.kimariji_len)),
+                  el('span', '', poem.kaminoku_kana.slice(poem.kimariji_len)));
+      st.append(line, el('div', 'kana', poem.kaminoku));
+    }
+    if (S.yomiShow === 'shimo' || S.yomiShow === 'both') {
+      st.append(el('div', 'kanji', poem.shimonoku_kana), el('div', 'kana', poem.shimonoku));
+    }
+    st.append(el('div', 'kana', `${poem.id}番　${poem.author}`));
+  }
+  yomiPlay(poem);
+  yomiButtons(poem);
+}
+
+/** 上の句だけ／上の句と下の句、を鳴らし分ける（分割音源があるときだけ効く） */
+function yomiPlay(poem) {
+  const after = () => {
+    if (S.yomiAuto && !yomi.done) yomi.nextAt = performance.now() + S.yomiWait * 1000;
+  };
+  if (S.yomiRange === 'both' && Audio_.hasSplit(poem.id)) {
+    Audio_.play(poem, () => {
+      if (yomi.done) return;
+      Audio_.play(poem, after, 'shimo');
+    }, 'kami');
+  } else {
+    Audio_.play(poem, after, S.yomiRange === 'kami' ? 'kami' : undefined);
+  }
+}
+
+function yomiButtons(poem) {
+  const board = $('#board'); board.innerHTML = '';
+  const again = el('button', 'ghost big', '♪ もういちど');
+  again.onclick = () => yomiPlay(poem);
+  const next = el('button', 'yominext', 'つぎの うた　▶');
+  next.onclick = () => yomiNext();
+  board.append(again, next);
+}
+
+function yomiFinish() {
+  yomi.done = true; clearInterval(yomi.timer); Audio_.stop();
+  $('#progFill').style.width = '100%';
+  $('#resultTitle').textContent = 'ぜんぶ 読みました';
+  const rs = $('#resultStats'); rs.innerHTML = '';
+  const d = el('div'); d.append(el('b', '', String(yomi.order.length)), el('span', '', 'しゅ よみました'));
+  rs.append(d);
+  $('#resultWeak').innerHTML = '';
+  go('result');
+}
+
 /* ==================== 試合 ==================== */
 // 五色百人一首の一試合をひとりでやる形にしたもの。
 //  ① 暗記時間（札を並べて、めくって覚える）… 競技かるたの15分暗記にあたる
@@ -961,8 +1057,9 @@ function onTake(id, f) {
   const right = shiai.now && id === shiai.now.id && !shiai.isKara;
   if (right) {
     grade(id, true, performance.now() - shiai.readAt);
-    f.classList.add('taken');
-    setTimeout(() => { f.remove(); fitFuda(); }, 220);
+    // ★ DOMから消さない。消すと残りの札で組み直されて大きさが変わる。
+    //   実際のかるたも、取ったあとは場所が空いたまま。
+    f.classList.add('taken'); f.onclick = null;
     shiai.nodes.delete(id);
     shiai.left--;
     Audio_.stop();
@@ -1103,6 +1200,19 @@ function renderSettings() {
         seg([[4,'4'],[8,'8'],[16,'16']], S.cardCount, v => S.cardCount = v));
   field(g, '1かいの もんだいすう', '五色の一色ぶんは20首',
         seg([[10,'10'],[20,'20'],[100,'ぜんぶ']], S.sessionLen, v => S.sessionLen = v));
+  field(g, 'よみ手：よみあげる ところ',
+        'ほんものの札で取るとき。上の句だけ＝競技かるた本番の形。'
+        + '上下＝教室で下の句も読んで確かめる形（分割音源が要る）',
+        seg([['kami','上の句だけ'],['both','上の句と下の句']], S.yomiRange, v => S.yomiRange = v));
+  field(g, 'よみ手：画面に 出す',
+        '手もとの札で取るので、画面は見なくてよい。答え合わせに使うときだけ出す',
+        seg([['none','出さない'],['shimo','下の句'],['kami','上の句'],['both','ぜんぶ']],
+            S.yomiShow, v => S.yomiShow = v));
+  field(g, 'よみ手：じどうで つぎへ',
+        '読み終わってから次の歌までを自動で送る。切ると「つぎの うた」を押すまで待つ',
+        seg([[false,'まつ'],[true,'じどう']], S.yomiAuto, v => S.yomiAuto = v));
+  if (S.yomiAuto) field(g, 'よみ手：つぎまでの ま', '',
+        seg([[3,'3秒'],[4,'4秒'],[6,'6秒'],[10,'10秒']], S.yomiWait, v => S.yomiWait = v));
   field(g, '試合の あんきタイム', '札をならべて覚える時間。競技かるたは15分とる',
         seg([[0,'なし'],[30,'30秒'],[60,'1分'],[120,'2分']], S.memoSec, v => S.memoSec = v));
   field(g, '試合に 空札を まぜる',
