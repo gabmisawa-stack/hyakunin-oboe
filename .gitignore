@@ -15,3 +15,6 @@ audio/import/
 
 # Cloudflare へ送る一時ディレクトリ
 dist/
+
+# 取り込みテスト用の一時置き場
+_t/
